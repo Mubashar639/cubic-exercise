@@ -19,6 +19,42 @@ type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
 const FACE_LABELS = ['Front', 'Back', 'Top', 'Bottom', 'Right', 'Left'];
 
+// Educational tips for cube nets and area calculations
+const CUBE_NET_TIPS = [
+  {
+    title: "Understanding Cube Nets",
+    content: "A cube net is a 2D arrangement of 6 squares that can be folded to form a cube. There are exactly 11 unique ways to arrange these squares, and each one represents a valid cube net. When you complete a net, you're discovering one of these mathematical patterns!"
+  },
+  {
+    title: "Area Formula for a Cube",
+    content: "The surface area of a cube is the sum of all 6 faces. If each face has area x², then: Area = x² + x² + x² + x² + x² + x² = 6x². This formula shows that the total surface area is 6 times the area of one face."
+  },
+  {
+    title: "Why 11 Unique Nets?",
+    content: "Mathematically, there are exactly 11 distinct cube nets. This means no matter how you arrange the 6 squares, you'll always end up with one of these 11 patterns. Some arrangements look different but are actually the same when rotated or reflected."
+  },
+  {
+    title: "Valid vs Invalid Nets",
+    content: "A valid net must: (1) Have all 6 faces connected edge-to-edge, (2) Not have opposite faces adjacent (they would overlap when folded), and (3) Form a single connected shape. Invalid nets cannot be folded into a cube without overlapping."
+  },
+  {
+    title: "Real-World Applications",
+    content: "Understanding cube nets helps in packaging design, architecture, and 3D modeling. Engineers use this knowledge to design boxes, containers, and structures that can be manufactured from flat materials and then folded into 3D shapes."
+  },
+  {
+    title: "Visualizing 3D from 2D",
+    content: "Building cube nets develops spatial reasoning - the ability to visualize how 2D shapes transform into 3D objects. This skill is essential in geometry, engineering, and design. Practice helps you 'see' the cube even when it's unfolded!"
+  },
+  {
+    title: "The Area Calculation",
+    content: "When you see x² on each face, remember: x represents the side length of the square. The area of one face is x × x = x². With 6 faces, the total surface area is 6x². This is why we write: x² + x² + x² + x² + x² + x² = 6x²."
+  },
+  {
+    title: "Folding Strategy",
+    content: "When building a net, start with one face and build outward. Each new face must be adjacent to an existing face on the actual cube. Think about which faces touch each other on a real cube - this helps you place faces correctly in the net."
+  }
+];
+
 // Cube face size constant
 const FACE_SIZE = 1.5; // Reduced from 2.0 for smaller cube
 const NET_OFFSET_X = 2.5; // Offset for unfolded net from cube (reduced from 5 for closer first drop)
@@ -889,6 +925,7 @@ export default function Cube3DPage() {
   const [dropZone, setDropZone] = useState<DropZone | null>(null);
   const [validDropZones, setValidDropZones] = useState<ValidDropZone[]>([]);
   const [unfoldHistory, setUnfoldHistory] = useState<number[]>([]); // Track order of unfolded faces
+  const [currentTip, setCurrentTip] = useState(0); // Current tip index for tips box
 
   // Animate face unfolding
   const animateFace = useCallback((faceIndex: number, targetProgress: number) => {
@@ -1182,6 +1219,14 @@ export default function Cube3DPage() {
 
   const unfoldedCount = faceStates.filter(f => f.unfolded).length;
 
+  const nextTip = useCallback(() => {
+    setCurrentTip((prev) => (prev + 1) % CUBE_NET_TIPS.length);
+  }, []);
+
+  const prevTip = useCallback(() => {
+    setCurrentTip((prev) => (prev - 1 + CUBE_NET_TIPS.length) % CUBE_NET_TIPS.length);
+  }, []);
+
   return (
     <div className="w-full h-screen bg-white">
       {/* Mode Switcher */}
@@ -1288,7 +1333,6 @@ export default function Cube3DPage() {
       </div>
 
       {/* Progress Counter */}
-      {mode === 'net-building' && (
         <div className="absolute top-20 right-4 bg-green-50 border-2 border-green-400 rounded-lg px-6 py-3 shadow-lg">
           <div className="text-center">
             <div className="text-sm text-gray-600">Faces Unfolded</div>
@@ -1327,7 +1371,6 @@ export default function Cube3DPage() {
             </button>
           </div>
         </div>
-      )}
       
       {/* Color Legend */}
       <div className="absolute bottom-4 right-4 bg-white/90 px-6 py-4 rounded-lg border border-gray-300 shadow-lg">
@@ -1351,7 +1394,6 @@ export default function Cube3DPage() {
       </div>
 
       {/* Instructions */}
-      {mode === 'net-building' && (
         <div className="absolute bottom-4 left-4 bg-blue-50 border-2 border-blue-400 rounded-lg px-4 py-3 shadow-lg max-w-xs">
           <h3 className="font-bold text-blue-800 mb-2">💡 Drag & Drop Net Building</h3>
           <p className="text-xs text-blue-700 mb-2">
@@ -1370,7 +1412,6 @@ export default function Cube3DPage() {
             🟢 Green = Valid • ⛔ No preview = Invalid placement
           </p>
         </div>
-      )}
 
       {/* Dragging Hint */}
       {mode === 'net-building' && draggedFaceIndex !== null && (
@@ -1386,15 +1427,76 @@ export default function Cube3DPage() {
 
       {/* Completion Message */}
       {mode === 'net-building' && unfoldedCount === 6 && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gradient-to-r from-yellow-50 to-green-50 border-4 border-green-400 rounded-xl px-8 py-6 shadow-2xl">
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gradient-to-r from-yellow-50 to-green-50 border-4 border-green-400 rounded-xl px-8 py-6 shadow-2xl z-30">
           <div className="text-center">
             <div className="text-5xl mb-3">🎉</div>
             <h2 className="text-3xl font-bold text-green-800 mb-2">Perfect Net!</h2>
-            <p className="text-green-700 text-lg">You've created a valid cube net!</p>
-            <p className="text-xs text-green-600 mt-2">One of 11 possible distinct nets</p>
+            <p className="text-green-700 text-lg mb-3">You've created a valid cube net!</p>
+            <p className="text-xs text-green-600 mb-4">One of 11 possible distinct nets</p>
+            
+            {/* Area Formula Display */}
+            <div className="mt-4 pt-4 border-t-2 border-green-300">
+              <p className="text-lg font-bold text-gray-800 mb-2">
+                Area = sum of 6 squares =
+              </p>
+              <div className="flex items-center justify-center gap-1 flex-wrap mb-2">
+                {FACE_COLORS.map((color, idx) => (
+                  <span
+                    key={idx}
+                    className="text-2xl font-bold"
+                    style={{ color: color }}
+                  >
+                    x<sup className="text-lg">2</sup>
+                    {idx < 5 && <span className="text-gray-800 mx-1">+</span>}
+                  </span>
+                ))}
+              </div>
+              <p className="text-2xl font-bold text-gray-800">
+                = 6x<sup className="text-xl">2</sup>
+              </p>
+            </div>
           </div>
         </div>
       )}
+
+        <div className="absolute left-2 top-48 bg-white border-2 border-black rounded-lg p-6 w-full max-w-md z-20">
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={prevTip}
+              className="text-2xl font-bold text-black hover:text-pink-500 transition-colors"
+            >
+              ‹
+            </button>
+            <h2 className="text-xl font-bold text-black">Cube Net Tips</h2>
+            <button
+              onClick={nextTip}
+              className="text-2xl font-bold text-black hover:text-pink-500 transition-colors"
+            >
+              ›
+            </button>
+          </div>
+          
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">
+              {CUBE_NET_TIPS[currentTip].title}
+            </h3>
+            <p className="text-black leading-relaxed text-sm">
+              {CUBE_NET_TIPS[currentTip].content}
+            </p>
+          </div>
+
+          {/* Dot indicators */}
+          <div className="flex justify-center gap-2 mt-4">
+            {CUBE_NET_TIPS.map((_, index) => (
+              <div
+                key={index}
+                className={`w-3 h-3 rounded-full transition-all ${
+                  index === currentTip ? 'bg-pink-500' : 'bg-pink-200'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
     </div>
   );
 }

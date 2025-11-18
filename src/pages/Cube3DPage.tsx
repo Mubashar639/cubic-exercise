@@ -910,7 +910,7 @@ export default function Cube3DPage() {
     testCubeNetValidation();
   }, []);
 
-  const [mode, setMode] = useState<Mode>('net-building');
+  const mode: Mode = 'net-building'; // Always in net-building mode
   const [faceStates, setFaceStates] = useState<FaceState[]>(
     FACE_COLORS.map(() => ({ 
       unfolded: false, 
@@ -1169,12 +1169,6 @@ export default function Cube3DPage() {
     animateFace(lastFaceIndex, 0);
   }, [unfoldHistory, faceStates, animateFace]);
 
-  const handleModeSwitch = useCallback((newMode: Mode) => {
-    setMode(newMode);
-    setDraggedFaceIndex(null);
-    setDropZone(null);
-    // Don't reset face states - preserve unfolded state between modes
-  }, []);
 
   const handleFoldToCube = useCallback(() => {
     // Animate all unfolded faces back to the cube
@@ -1240,32 +1234,6 @@ export default function Cube3DPage() {
 
   return (
     <div className="w-full h-screen bg-white">
-      {/* Mode Switcher */}
-      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-white/95 px-4 py-2 rounded-lg border-2 border-gray-300 shadow-lg">
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleModeSwitch('net-building')}
-            className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-              mode === 'net-building'
-                ? 'bg-green-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            📐 Net Building Mode
-          </button>
-          <button
-            onClick={() => handleModeSwitch('interaction')}
-            className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-              mode === 'interaction'
-                ? 'bg-blue-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            🎮 Interaction Mode
-          </button>
-          
-        </div>
-      </div>
 
       {/* 3D Canvas */}
       <div 
@@ -1319,10 +1287,10 @@ export default function Cube3DPage() {
             isNetComplete={unfoldedCount === 6}
           />
           <OrbitControls
-            enableZoom={mode === 'interaction' || draggedFaceIndex === null}
-            enablePan={mode === 'interaction' || draggedFaceIndex === null}
-            enableRotate={mode === 'interaction'}
-            enabled={mode === 'interaction' || draggedFaceIndex === null}
+            enableZoom={draggedFaceIndex === null}
+            enablePan={draggedFaceIndex === null}
+            enableRotate={draggedFaceIndex === null}
+            enabled={draggedFaceIndex === null}
             minDistance={2}
             maxDistance={15}
           />
@@ -1332,14 +1300,12 @@ export default function Cube3DPage() {
       {/* Header */}
       <div className="absolute top-20 left-4 text-gray-800 bg-white/90 px-6 py-3 rounded-lg border border-gray-300 shadow-lg">
         <h1 className="text-2xl font-bold">
-          {mode === 'interaction' ? '3D Cube - Interaction' : '3D Cube - Net Building'}
+          3D Cube - Net Building
         </h1>
         <p className="text-sm text-gray-600 mt-1">
-          {mode === 'interaction' 
-            ? 'Drag to rotate • Scroll to zoom • Pan to move'
-            : draggedFaceIndex !== null
-              ? 'Drag over an unfolded face edge to attach'
-              : 'Scroll to zoom • Pan to move • Drag faces to build net'
+          {draggedFaceIndex !== null
+            ? 'Drag over an unfolded face edge to attach'
+            : 'Drag to rotate • Scroll to zoom • Pan to move • Drag faces to build net'
           }
         </p>
       </div>

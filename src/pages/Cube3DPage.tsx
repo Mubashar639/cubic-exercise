@@ -1529,18 +1529,7 @@ export default function Cube3DPage() {
         </div>
 
         {/* Autoplay Video below tips container */}
-        <div className="absolute left-2 top-[600px] w-full max-w-md z-20">
-          <div className="bg-white border-2 border-black rounded-lg overflow-hidden shadow-lg">
-            <video
-              src="/Cube_final.mp4"
-              className="w-full h-auto"
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
-          </div>
-        </div>
+       
     </div>
   );
 }

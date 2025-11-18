@@ -6,12 +6,12 @@ import * as THREE from 'three';
 
 // Face colors for the cube - same as CubeSolvingPage
 const FACE_COLORS = [
-  '#FFB3BA', // Pink - Front (Face 1)
-  '#FFD4A3', // Peach - Back (Face 2)
-  '#B0E0E6', // Light Blue - Top (Face 3)
-  '#90EE90', // Light Green - Bottom (Face 4)
-  '#FFFACD', // Lemon Chiffon - Right (Face 5)
-  '#CD853F', // Peru - Left (Face 6)
+  '#F7DDB3', // Pink - Front (Face 1)
+  '#F6D2E8', // Peach - Back (Face 2)
+  '#B6E59C', // Light Blue - Top (Face 3)
+  '#A8E4FA', // Light Green - Bottom (Face 4)
+  '#FDFFA3', // Lemon Chiffon - Right (Face 5)
+  '#E89A88', // Peru - Left (Face 6)
 ];
 
 type Mode = 'interaction' | 'net-building';
@@ -1525,6 +1525,20 @@ export default function Cube3DPage() {
                 }`}
               />
             ))}
+          </div>
+        </div>
+
+        {/* Autoplay Video below tips container */}
+        <div className="absolute left-2 top-[600px] w-full max-w-md z-20">
+          <div className="bg-white border-2 border-black rounded-lg overflow-hidden shadow-lg">
+            <video
+              src="/Cube_final.mp4"
+              className="w-full h-auto"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
           </div>
         </div>
     </div>

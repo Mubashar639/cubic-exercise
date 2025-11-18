@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useState, useRef, useEffect } from 'react'
 
 const THEOREMS = [
   {
@@ -21,6 +22,52 @@ const THEOREMS = [
 ]
 
 export default function HomePage() {
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const handleVideoEnd = () => {
+    // Video will loop, so keep playing state
+    if (videoRef.current && !hoveredCard) {
+      videoRef.current.play()
+    }
+  }
+
+  const handleMouseEnter = (theoremId: string) => {
+    if (theoremId === 'cube-3d') {
+      setHoveredCard(theoremId)
+      // Pause on hover
+      if (videoRef.current) {
+        videoRef.current.pause()
+        setIsPlaying(false)
+      }
+    }
+  }
+
+  const handleMouseLeave = (theoremId: string) => {
+    if (theoremId === 'cube-3d') {
+      setHoveredCard(null)
+      // Auto-play when not hovering
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.play()
+          setIsPlaying(true)
+        }
+      }, 100)
+    }
+  }
+
+  // Auto-play video on component mount and when not hovering
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (videoRef.current && !hoveredCard) {
+        videoRef.current.play()
+        setIsPlaying(true)
+      }
+    }, 500) // Delay to ensure video is loaded
+    return () => clearTimeout(timer)
+  }, [hoveredCard])
+
   return (
     <div className="min-h-screen bg-white p-6">
       <div className="max-w-6xl mx-auto">
@@ -33,12 +80,43 @@ export default function HomePage() {
           {THEOREMS.map((theorem) => (
             <div
               key={theorem.id}
-              className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-lg hover:shadow-xl transition-shadow"
+              className="bg-white border-2 border-gray-300 rounded-xl p-6 shadow-lg hover:shadow-xl transition-shadow relative overflow-hidden"
+              onMouseEnter={() => handleMouseEnter(theorem.id)}
+              onMouseLeave={() => handleMouseLeave(theorem.id)}
             >
               <h2 className="text-xl font-semibold text-black mb-2">
                 {theorem.number ? `Circle Theorem ${theorem.number}` : 'Geometry Exercise'}
               </h2>
               <p className="text-gray-700 mb-4 font-medium">{theorem.name}</p>
+              
+              {/* Video Preview for cube-3d */}
+              {theorem.id === 'cube-3d' && (
+                <div className="relative mb-4 rounded-lg overflow-hidden bg-gray-100 aspect-video">
+                  <video
+                    ref={videoRef}
+                    src="/Cube_final.mp4"
+                    className="w-full h-full object-cover"
+                    onEnded={handleVideoEnd}
+                    loop={true}
+                    muted
+                  />
+                  
+                  {/* Pause Indicator - shows when hovering (video is paused) */}
+                  {hoveredCard === 'cube-3d' && !isPlaying && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 transition-opacity">
+                      <div className="w-12 h-12 bg-white bg-opacity-90 rounded-full flex items-center justify-center shadow-lg">
+                        <svg
+                          className="w-6 h-6 text-indigo-600"
+                          fill="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               
               <Link
                 to={`/${theorem.id}`}

@@ -910,7 +910,7 @@ export default function Cube3DPage() {
     testCubeNetValidation();
   }, []);
 
-  const [mode, setMode] = useState<Mode>('interaction');
+  const [mode, setMode] = useState<Mode>('net-building');
   const [faceStates, setFaceStates] = useState<FaceState[]>(
     FACE_COLORS.map(() => ({ 
       unfolded: false, 
@@ -926,6 +926,7 @@ export default function Cube3DPage() {
   const [validDropZones, setValidDropZones] = useState<ValidDropZone[]>([]);
   const [unfoldHistory, setUnfoldHistory] = useState<number[]>([]); // Track order of unfolded faces
   const [currentTip, setCurrentTip] = useState(0); // Current tip index for tips box
+  const [isCompletionClosed, setIsCompletionClosed] = useState(false); // Track if completion popup is closed
 
   // Animate face unfolding
   const animateFace = useCallback((faceIndex: number, targetProgress: number) => {
@@ -1219,6 +1220,12 @@ export default function Cube3DPage() {
 
   const unfoldedCount = faceStates.filter(f => f.unfolded).length;
 
+  // Reset completion popup when net becomes incomplete
+  const shouldShowCompletion = unfoldedCount === 6 && !isCompletionClosed;
+  if (unfoldedCount < 6 && isCompletionClosed) {
+    setIsCompletionClosed(false);
+  }
+
   const nextTip = useCallback(() => {
     setCurrentTip((prev) => (prev + 1) % CUBE_NET_TIPS.length);
   }, []);
@@ -1227,21 +1234,15 @@ export default function Cube3DPage() {
     setCurrentTip((prev) => (prev - 1 + CUBE_NET_TIPS.length) % CUBE_NET_TIPS.length);
   }, []);
 
+  const handleCloseCompletion = useCallback(() => {
+    setIsCompletionClosed(true);
+  }, []);
+
   return (
     <div className="w-full h-screen bg-white">
       {/* Mode Switcher */}
       <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-white/95 px-4 py-2 rounded-lg border-2 border-gray-300 shadow-lg">
         <div className="flex gap-2">
-          <button
-            onClick={() => handleModeSwitch('interaction')}
-            className={`px-4 py-2 rounded-lg font-semibold transition-all ${
-              mode === 'interaction'
-                ? 'bg-blue-500 text-white shadow-md'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            🎮 Interaction Mode
-          </button>
           <button
             onClick={() => handleModeSwitch('net-building')}
             className={`px-4 py-2 rounded-lg font-semibold transition-all ${
@@ -1252,6 +1253,17 @@ export default function Cube3DPage() {
           >
             📐 Net Building Mode
           </button>
+          <button
+            onClick={() => handleModeSwitch('interaction')}
+            className={`px-4 py-2 rounded-lg font-semibold transition-all ${
+              mode === 'interaction'
+                ? 'bg-blue-500 text-white shadow-md'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            🎮 Interaction Mode
+          </button>
+          
         </div>
       </div>
 
@@ -1426,8 +1438,26 @@ export default function Cube3DPage() {
       )}
 
       {/* Completion Message */}
-      {mode === 'net-building' && unfoldedCount === 6 && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gradient-to-r from-yellow-50 to-green-50 border-4 border-green-400 rounded-xl px-8 py-6 shadow-2xl z-30">
+      {shouldShowCompletion && (
+        <div style={{ zIndex: 23232323, transform: 'translate(-50%, -50%)' }} className="absolute top-1/2 left-1/2 bg-gradient-to-r from-yellow-50 to-green-50 border-4 border-green-400 rounded-xl px-8 py-6 shadow-2xl">
+          {/* Close Button */}
+          <button
+            onClick={handleCloseCompletion}
+            className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-full transition-colors"
+            aria-label="Close"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          
           <div className="text-center">
             <div className="text-5xl mb-3">🎉</div>
             <h2 className="text-3xl font-bold text-green-800 mb-2">Perfect Net!</h2>

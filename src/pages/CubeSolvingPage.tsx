@@ -266,16 +266,33 @@ function FaceMesh({
       }
       const numCombined = Math.max(2, currentCombined.length || 1);
       const segmentHeight = scaleY / numCombined;
+      
+      // For Face 4 (bottom face), ensure it stays centered at its original position
+      const isFace4 = targetFaceIndex === 3;
+      
       // Move up by 25% when 3 faces combine (0.25 units)
       // Also move more toward second face position when 3 faces combine
-      const upOffset = numCombined === 3 ? 0.25 : 0;
-      const face2Offset = numCombined === 3 ? 0.15 : 0; // Move toward second face when 3 faces combine (reduced from 0.35)
+      // But for Face 4, adjust offsets to keep it centered
+      let upOffset = numCombined === 3 ? 0.25 : 0;
+      let face2Offset = numCombined === 3 ? 0.15 : 0;
+      
+      // For Face 4, adjust offsets to ensure bottom segment stays at original position
+      if (isFace4) {
+        if (numCombined === 2) {
+          // For 2 faces, no offset needed - segments should be perfectly aligned
+          upOffset = 0;
+          face2Offset = 0;
+        } else if (numCombined === 3) {
+          // For 3 faces, adjust offset to keep Face 4 centered
+          upOffset = 0.15;
+          face2Offset = 0.15;
+        }
+      }
       
       segmentRefs.current.forEach((seg, idx) => {
         if (seg && idx < numCombined && currentCombined.length > 0) {
           // Position from top: each segment gets equal space, aligned at edges
           // Top segment starts at scaleY/2, bottom segment ends at -scaleY/2
-          // Move toward second face position only when 3 faces combine
           // currentCombined is reversed: [top, ..., bottom]
           // segments array is also reversed from combinedFaces
           // We position idx 0 at top, so we need to match currentCombined[idx] to segment at idx
@@ -311,17 +328,43 @@ function FaceMesh({
       if (faceState.combinedFaces.length > 1) {
         const numSegments = faceState.combinedFaces.length;
         const segmentHeight = scaleY / numSegments;
+        
+        // For Face 4 (bottom face), ensure it stays centered at its original position
+        // Face 4 is at index 3, original position y = -0.5
+        const isFace4 = faceIndex === 3;
+        
         // Move up by 25% when 3 faces combine (0.25 units)
         // Also move more toward second face position when 3 faces combine
-        const upOffset = numSegments === 3 ? 0.25 : 0;
-        const face2Offset = numSegments === 3 ? 0.25 : 0; // Move toward second face when 3 faces combine (reduced from 0.35)
+        // But for Face 4, we need to adjust offsets to keep it centered
+        let upOffset = numSegments === 3 ? 0.25 : 0;
+        let face2Offset = numSegments === 3 ? 0.25 : 0;
+        
+        // For Face 4, adjust offsets to ensure bottom segment stays at original position
+        if (isFace4) {
+          // When Face 4 combines, the bottom segment should stay at y = 0 relative to group center
+          // The group is already positioned at Face 4's original position
+          // So we need to ensure the bottom segment (last idx) is at the correct position
+          // For 2 faces: bottom segment should be at -scaleY/2 = -1
+          // For 3 faces: bottom segment should be at -scaleY/2 = -1.5
+          // But we want Face 4 to appear centered, so we adjust the offset
+          if (numSegments === 2) {
+            // For 2 faces, no offset needed - segments should be perfectly aligned
+            upOffset = 0;
+            face2Offset = 0;
+          } else if (numSegments === 3) {
+            // For 3 faces, adjust offset to keep Face 4 centered
+            // The bottom segment (Face 4) should be at the bottom of the combined face
+            // We reduce the offset to keep it more centered
+            upOffset = 0.15;
+            face2Offset = 0.15;
+          }
+        }
         
         segmentRefs.current.forEach((seg, idx) => {
           if (seg && idx < numSegments) {
             // Position from top: each segment gets equal space, aligned at edges
             // Top segment starts at scaleY/2, bottom segment ends at -scaleY/2
             // Each segment is perfectly aligned with no gaps
-            // Move toward second face position only when 3 faces combine
             // segments array: segments[0] = top face, segments[last] = bottom face
             // combinedFaces = [bottom, top], reversed = [top, bottom] = segments order
             const segmentTop = scaleY * 0.5 - idx * segmentHeight;

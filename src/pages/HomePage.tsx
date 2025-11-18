@@ -10,13 +10,14 @@ const THEOREMS = [
     color: 'bg-pink-500 hover:bg-pink-600'
   },
   {
-    id: 'cube-net-unfolding',
+    id: 'cube-3d',
     number: null,
     name: 'Cube Net Unfolding',
     fullName: 'Cube Net Unfolding - 11 Distinct Nets',
     description: 'Explore the 11 distinct ways to unfold a 3D cube into 2D nets',
     color: 'bg-indigo-500 hover:bg-indigo-600'
-  }
+  },
+  
 ]
 
 export default function HomePage() {

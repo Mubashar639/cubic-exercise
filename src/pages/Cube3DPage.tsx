@@ -57,6 +57,7 @@ const CUBE_NET_TIPS = [
 
 // Cube face size constant
 const FACE_SIZE = 1.5; // Reduced from 2.0 for smaller cube
+const TOTAL_FACES = FACE_COLORS.length;
 
 // Folded (cube) positions and rotations
 const FOLDED_POSITIONS = [
@@ -244,6 +245,98 @@ function computeWorldMatrix(
 function computeAllWorldMatrices(faceStates: FaceState[]): THREE.Matrix4[] {
   const cache = new Array<THREE.Matrix4 | null>(FACE_COLORS.length).fill(null);
   return faceStates.map((_, idx) => computeWorldMatrix(idx, faceStates, cache).clone());
+}
+
+const MATRIX_POSITION = new THREE.Vector3();
+const MATRIX_NORMAL = new THREE.Vector3();
+const TEMP_MATRIX3 = new THREE.Matrix3();
+
+function getNormalFromMatrix(matrix: THREE.Matrix4): THREE.Vector3 {
+  TEMP_MATRIX3.setFromMatrix4(matrix);
+  return MATRIX_NORMAL.set(0, 0, 1).applyMatrix3(TEMP_MATRIX3).normalize().clone();
+}
+
+function getPlaneAxesFromMatrix(matrix: THREE.Matrix4) {
+  const normal = getNormalFromMatrix(matrix);
+  TEMP_MATRIX3.setFromMatrix4(matrix);
+  const right = new THREE.Vector3(1, 0, 0).applyMatrix3(TEMP_MATRIX3);
+  const projectedRight = right.sub(normal.clone().multiplyScalar(right.dot(normal)));
+  const safeRight =
+    projectedRight.lengthSq() < 1e-6
+      ? new THREE.Vector3(0, 1, 0).cross(normal).normalize()
+      : projectedRight.normalize();
+  const up = new THREE.Vector3().crossVectors(normal, safeRight).normalize();
+  return { normal, right: safeRight, up };
+}
+
+type NetCompletionStatus = {
+  isComplete: boolean;
+  canonicalKey?: string;
+};
+
+function evaluateNetCompletion(
+  faceStates: FaceState[],
+  worldMatrices: THREE.Matrix4[]
+): NetCompletionStatus {
+  if (faceStates.length !== TOTAL_FACES || worldMatrices.length !== TOTAL_FACES) {
+    return { isComplete: false };
+  }
+
+  if (
+    faceStates.some(
+      state => !state.unfolded || state.animProgress < 0.999 || !state.direction
+    )
+  ) {
+    return { isComplete: false };
+  }
+
+  const { normal: planeNormal, right: planeRight, up: planeUp } = getPlaneAxesFromMatrix(
+    worldMatrices[0]
+  );
+  const normals = worldMatrices.map(getNormalFromMatrix);
+  const planar = normals.every(
+    n => Math.abs(n.dot(planeNormal)) >= 0.999
+  );
+  if (!planar) {
+    return { isComplete: false };
+  }
+
+  const tolerance = FACE_SIZE * 0.1;
+  const gridMap = new Map<string, number>();
+
+  for (let idx = 0; idx < worldMatrices.length; idx++) {
+    const matrix = worldMatrices[idx];
+    MATRIX_POSITION.setFromMatrixPosition(matrix);
+    const u = MATRIX_POSITION.dot(planeRight);
+    const v = MATRIX_POSITION.dot(planeUp);
+    const gridX = Math.round(u / FACE_SIZE);
+    const gridY = Math.round(v / FACE_SIZE);
+    if (
+      Math.abs(u - gridX * FACE_SIZE) > tolerance ||
+      Math.abs(v - gridY * FACE_SIZE) > tolerance
+    ) {
+      return { isComplete: false };
+    }
+    const key = `${gridX},${gridY}`;
+    if (gridMap.has(key)) {
+      return { isComplete: false };
+    }
+    gridMap.set(key, idx);
+  }
+
+  if (gridMap.size !== TOTAL_FACES) {
+    return { isComplete: false };
+  }
+
+  const canonicalKey = getCanonicalShapeKey(gridMap);
+  if (!VALID_SHAPE_CANONICALS.has(canonicalKey)) {
+    if (gridMap.size === TOTAL_FACES) {
+      console.debug('[CubeNet] Unknown canonical net shape detected:', canonicalKey);
+    }
+    return { isComplete: false };
+  }
+
+  return { isComplete: true, canonicalKey };
 }
 
 type FaceState = {
@@ -647,29 +740,6 @@ function testCubeNetValidation() {
 
 
 
-// Component to show "x²" in center of face
-function XSquaredCenter() {
-  const fontSize = 0.4;
-  
-  return (
-    <Html position={[0, 0, 0.01]} center>
-      <div style={{
-        fontSize: `${fontSize * 100}px`,
-        fontWeight: 700,
-        color: '#1a202c',
-        fontFamily: '"Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif',
-        textShadow: '2px 2px 4px rgba(0,0,0,0.3)',
-        pointerEvents: 'none',
-        userSelect: 'none',
-        textAlign: 'center',
-        lineHeight: 1.2,
-      }}>
-        x<sup style={{ fontSize: '0.65em', fontWeight: 600 }}>2</sup>
-      </div>
-    </Html>
-  );
-}
-
 
 // Component to show unfolding direction arrows
 function UnfoldArrows({
@@ -811,7 +881,6 @@ function InteractiveCubeFace({
   worldMatrix,
   onUnfold,
   onFoldBack,
-  isNetComplete,
   possibleDirections,
 }: {
   faceIndex: number;
@@ -821,7 +890,6 @@ function InteractiveCubeFace({
   worldMatrix: THREE.Matrix4;
   onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
-  isNetComplete: boolean;
   possibleDirections: Direction[];
 }) {
   const groupRef = useRef<THREE.Group>(null);
@@ -989,10 +1057,7 @@ function InteractiveCubeFace({
             <lineBasicMaterial color="#FFD700" opacity={1} transparent={false} linewidth={3} />
           </lineSegments>
         )}
-        {/* Show x² in center when net is complete */}
-        {faceState.unfolded && isNetComplete && (
-          <XSquaredCenter />
-        )}
+        {/* Labels removed per user request */}
         {/* Unfold arrows when hovering over folded face */}
         {mode === 'net-building' && !faceState.unfolded && showArrows && (
           <UnfoldArrows
@@ -1011,19 +1076,17 @@ function InteractiveCubeFace({
 function InteractiveCube({
   mode,
   faceStates,
+  worldMatrices,
   onUnfold,
   onFoldBack,
-  isNetComplete,
 }: {
   mode: Mode;
   faceStates: FaceState[];
+  worldMatrices: THREE.Matrix4[];
   onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
-  isNetComplete: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
-
-  const worldMatrices = useMemo(() => computeAllWorldMatrices(faceStates), [faceStates]);
 
   const createsCycle = useCallback(
     (candidateParent: number, faceIndex: number) => {
@@ -1072,7 +1135,6 @@ function InteractiveCube({
           worldMatrix={worldMatrices[idx]}
           onUnfold={onUnfold}
           onFoldBack={onFoldBack}
-          isNetComplete={isNetComplete}
           possibleDirections={getPossibleDirections(idx)}
         />
       ))}
@@ -1182,6 +1244,7 @@ export default function Cube3DPage() {
       return newStates;
     });
     animateFace(faceIndex, 0);
+    setIsCompletionClosed(false);
     // Remove from history
     setUnfoldHistory(prev => prev.filter(idx => idx !== faceIndex));
   }, [animateFace]);
@@ -1244,6 +1307,7 @@ export default function Cube3DPage() {
       return newStates;
     });
     animateFace(lastFaceIndex, 0);
+    setIsCompletionClosed(false);
   }, [unfoldHistory, faceStates, animateFace]);
 
 
@@ -1260,6 +1324,7 @@ export default function Cube3DPage() {
       animateFace(idx, 0);
     });
     
+    setIsCompletionClosed(false);
     // After animation completes, reset all states
     setTimeout(() => {
       setFaceStates(FACE_COLORS.map(() => ({ 
@@ -1284,15 +1349,20 @@ export default function Cube3DPage() {
       parentFace: null
     })));
     setUnfoldHistory([]);
+    setIsCompletionClosed(false);
   }, []);
 
-  const unfoldedCount = faceStates.filter(f => f.unfolded).length;
+  const worldMatrices = useMemo(() => computeAllWorldMatrices(faceStates), [faceStates]);
+  const netStatus = useMemo(
+    () => evaluateNetCompletion(faceStates, worldMatrices),
+    [faceStates, worldMatrices]
+  );
+  const netIsComplete = netStatus.isComplete;
 
-  // Reset completion popup when net becomes incomplete
-  const shouldShowCompletion = unfoldedCount === 6 && !isCompletionClosed;
-  if (unfoldedCount < 6 && isCompletionClosed) {
-    setIsCompletionClosed(false);
-  }
+  const unfoldedCount = faceStates.filter(f => f.unfolded).length;
+  const progressCount = netIsComplete ? TOTAL_FACES : unfoldedCount;
+
+  const shouldShowCompletion = netIsComplete && !isCompletionClosed;
 
   const nextTip = useCallback(() => {
     setCurrentTip((prev) => (prev + 1) % CUBE_NET_TIPS.length);
@@ -1322,12 +1392,12 @@ export default function Cube3DPage() {
           <directionalLight position={[-5, -5, -5]} intensity={0.8} />
           <directionalLight position={[0, 5, 0]} intensity={1} />
           <pointLight position={[0, 0, 0]} intensity={0.5} />
-          <InteractiveCube 
-            mode={mode} 
+          <InteractiveCube
+            mode={mode}
             faceStates={faceStates}
+            worldMatrices={worldMatrices}
             onUnfold={handleUnfold}
             onFoldBack={handleFoldBack}
-            isNetComplete={unfoldedCount === 6}
           />
           <OrbitControls
             enableZoom={true}
@@ -1354,7 +1424,7 @@ export default function Cube3DPage() {
         <div className="absolute top-20 right-4 bg-green-50 border-2 border-green-400 rounded-lg px-6 py-3 shadow-lg">
           <div className="text-center">
             <div className="text-sm text-gray-600">Faces Unfolded</div>
-            <div className="text-3xl font-bold text-green-600">{unfoldedCount} / 6</div>
+            <div className="text-3xl font-bold text-green-600">{progressCount} / {TOTAL_FACES}</div>
           </div>
           <div className="mt-2 flex flex-col gap-2">
             <div className="flex gap-2">
@@ -1398,14 +1468,14 @@ export default function Cube3DPage() {
             <div key={idx} className="flex items-center gap-3">
               <div className="w-6 h-6 rounded border border-gray-400" style={{ backgroundColor: color }}></div>
               <span className="text-gray-800 text-sm">{FACE_LABELS[idx]}</span>
-              {mode === 'net-building' && faceStates[idx].unfolded && (
+              {/* {mode === 'net-building' && faceStates[idx].unfolded && (
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-green-600 font-bold">✓</span>
                   <span className="text-xs text-gray-500">
                     ({faceStates[idx].gridX}, {faceStates[idx].gridY})
                   </span>
                 </div>
-              )}
+              )} */}
             </div>
           ))}
         </div>

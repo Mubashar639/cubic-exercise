@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Html } from '@react-three/drei';
@@ -14,49 +14,154 @@ const FACE_COLORS = [
   '#E89A88', // Peru - Left (Face 6)
 ];
 
+
+
 type Mode = 'interaction' | 'net-building';
 type Direction = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
 const FACE_LABELS = ['Front', 'Back', 'Top', 'Bottom', 'Right', 'Left'];
 
+type CubeNetTip = {
+  title: string;
+  content: string;
+  highlights: string[];
+  accent: [string, string];
+  icon: string;
+  tagline: string;
+};
+
+const MMC_COLORS = {
+  blushPink: '#fd99c5',
+  petalPink: '#feb8d7',
+  aquaBlue: '#33d0fb',
+  electricBlue: '#23d4ff',
+  coralGlow: '#fb67a7',
+  deepNavy: '#111432',
+  sunshineYellow: '#ffd966',
+  energyRed: '#cf2a0e',
+} as const;
+
+const PRIMARY_EMPHASIS_COLORS = [MMC_COLORS.energyRed, MMC_COLORS.electricBlue, MMC_COLORS.sunshineYellow] as const;
+
+const createGradient = (from: string, to: string) => `linear-gradient(135deg, ${from}, ${to})`;
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const highlightImportantSegments = (text: string, highlights: string[]): ReactNode[] | string => {
+  if (!highlights.length) {
+    return text;
+  }
+
+  const escaped = highlights.map(escapeRegExp).join('|');
+
+  if (!escaped) {
+    return text;
+  }
+
+  const regex = new RegExp(`(${escaped})`, 'gi');
+  let colorIndex = 0;
+
+  return text
+    .split(regex)
+    .map((segment, idx) => {
+      if (!segment) {
+        return null;
+      }
+      const matchesHighlight = highlights.some(
+        highlight => highlight.toLowerCase() === segment.toLowerCase()
+      );
+      if (matchesHighlight) {
+        const color = PRIMARY_EMPHASIS_COLORS[colorIndex % PRIMARY_EMPHASIS_COLORS.length];
+        colorIndex += 1;
+        return (
+          <span
+            key={`highlight-${segment}-${idx}`}
+            style={{ color }}
+            className="font-semibold"
+          >
+            {segment}
+          </span>
+        );
+      }
+      return (
+        <span key={`text-${segment}-${idx}`}>
+          {segment}
+        </span>
+      );
+    })
+    .filter(Boolean) as ReactNode[];
+};
+
 // Educational tips for cube nets and area calculations
-const CUBE_NET_TIPS = [
+const CUBE_NET_TIPS: CubeNetTip[] = [
   {
     title: "Understanding Cube Nets",
-    content: "A cube net is a 2D arrangement of 6 squares that can be folded to form a cube. There are exactly 11 unique ways to arrange these squares, and each one represents a valid cube net. When you complete a net, you're discovering one of these mathematical patterns!"
+    content: "A cube net is a 2D arrangement of 6 squares that can be folded to form a cube. There are exactly 11 unique ways to arrange these squares, and each one represents a valid cube net. When you complete a net, you're discovering one of these mathematical patterns!",
+    highlights: ["cube net", "6 squares", "11 unique ways", "mathematical patterns"],
+    icon: "🧩",
+    tagline: "See how flat geometry becomes a 3D shape.",
+    accent: [MMC_COLORS.blushPink, MMC_COLORS.petalPink]
   },
   {
     title: "Area Formula for a Cube",
-    content: "The surface area of a cube is the sum of all 6 faces. If each face has area x², then: Area = x² + x² + x² + x² + x² + x² = 6x². This formula shows that the total surface area is 6 times the area of one face."
+    content: "The surface area of a cube is the sum of all 6 faces. If each face has area x², then: Area = x² + x² + x² + x² + x² + x² = 6x². This formula shows that the total surface area is 6 times the area of one face.",
+    highlights: ["surface area", "6 faces", "x²", "6x²"],
+    icon: "🧮",
+    tagline: "Total area = six identical squares.",
+    accent: [MMC_COLORS.aquaBlue, MMC_COLORS.electricBlue]
   },
   {
     title: "Why 11 Unique Nets?",
-    content: "Mathematically, there are exactly 11 distinct cube nets. This means no matter how you arrange the 6 squares, you'll always end up with one of these 11 patterns. Some arrangements look different but are actually the same when rotated or reflected."
+    content: "Mathematically, there are exactly 11 distinct cube nets. This means no matter how you arrange the 6 squares, you'll always end up with one of these 11 patterns. Some arrangements look different but are actually the same when rotated or reflected.",
+    highlights: ["11 distinct cube nets", "6 squares", "rotated or reflected"],
+    icon: "🔍",
+    tagline: "Different layouts can fold into the same cube.",
+    accent: [MMC_COLORS.electricBlue, MMC_COLORS.blushPink]
   },
   {
     title: "Valid vs Invalid Nets",
-    content: "A valid net must: (1) Have all 6 faces connected edge-to-edge, (2) Not have opposite faces adjacent (they would overlap when folded), and (3) Form a single connected shape. Invalid nets cannot be folded into a cube without overlapping."
+    content: "A valid net must: (1) Have all 6 faces connected edge-to-edge, (2) Not have opposite faces adjacent (they would overlap when folded), and (3) Form a single connected shape. Invalid nets cannot be folded into a cube without overlapping.",
+    highlights: ["valid net", "6 faces", "opposite faces", "single connected shape"],
+    icon: "✅",
+    tagline: "Three quick checks keep your nets correct.",
+    accent: [MMC_COLORS.sunshineYellow, MMC_COLORS.blushPink]
   },
   {
     title: "Real-World Applications",
-    content: "Understanding cube nets helps in packaging design, architecture, and 3D modeling. Engineers use this knowledge to design boxes, containers, and structures that can be manufactured from flat materials and then folded into 3D shapes."
+    content: "Understanding cube nets helps in packaging design, architecture, and 3D modeling. Engineers use this knowledge to design boxes, containers, and structures that can be manufactured from flat materials and then folded into 3D shapes.",
+    highlights: ["packaging design", "architecture", "3D modeling", "flat materials"],
+    icon: "🏗️",
+    tagline: "From cardboard boxes to buildings.",
+    accent: [MMC_COLORS.aquaBlue, MMC_COLORS.sunshineYellow]
   },
   {
     title: "Visualizing 3D from 2D",
-    content: "Building cube nets develops spatial reasoning - the ability to visualize how 2D shapes transform into 3D objects. This skill is essential in geometry, engineering, and design. Practice helps you 'see' the cube even when it's unfolded!"
+    content: "Building cube nets develops spatial reasoning - the ability to visualize how 2D shapes transform into 3D objects. This skill is essential in geometry, engineering, and design. Practice helps you 'see' the cube even when it's unfolded!",
+    highlights: ["spatial reasoning", "2D shapes", "3D objects", "geometry"],
+    icon: "🧠",
+    tagline: "Train your brain to rotate shapes mentally.",
+    accent: [MMC_COLORS.coralGlow, MMC_COLORS.blushPink]
   },
   {
     title: "The Area Calculation",
-    content: "When you see x² on each face, remember: x represents the side length of the square. The area of one face is x × x = x². With 6 faces, the total surface area is 6x². This is why we write: x² + x² + x² + x² + x² + x² = 6x²."
+    content: "When you see x² on each face, remember: x represents the side length of the square. The area of one face is x × x = x². With 6 faces, the total surface area is 6x². This is why we write: x² + x² + x² + x² + x² + x² = 6x².",
+    highlights: ["x²", "side length", "6 faces", "6x²"],
+    icon: "📏",
+    tagline: "Area is just length multiplied by itself.",
+    accent: [MMC_COLORS.electricBlue, MMC_COLORS.coralGlow]
   },
   {
     title: "Folding Strategy",
-    content: "When building a net, start with one face and build outward. Each new face must be adjacent to an existing face on the actual cube. Think about which faces touch each other on a real cube - this helps you place faces correctly in the net."
+    content: "When building a net, start with one face and build outward. Each new face must be adjacent to an existing face on the actual cube. Think about which faces touch each other on a real cube - this helps you place faces correctly in the net.",
+    highlights: ["start with one face", "adjacent", "real cube", "place faces correctly"],
+    icon: "🧭",
+    tagline: "Grow from the center face and mirror the cube.",
+    accent: [MMC_COLORS.energyRed, MMC_COLORS.sunshineYellow]
   }
 ];
 
 // Cube face size constant
-const FACE_SIZE = 1.5; // Reduced from 2.0 for smaller cube
+const FACE_SIZE = 1.75; // Reduced from 2.0 for smaller cube
 const TOTAL_FACES = FACE_COLORS.length;
 
 // Folded (cube) positions and rotations
@@ -278,12 +383,18 @@ function evaluateNetCompletion(
   faceStates: FaceState[],
   worldMatrices: THREE.Matrix4[]
 ): NetCompletionStatus {
+  // console.log("evaluateNetCompletion",faceStates.length, TOTAL_FACES, worldMatrices.length, TOTAL_FACES)
   if (faceStates.length !== TOTAL_FACES || worldMatrices.length !== TOTAL_FACES) {
     return { isComplete: false };
   }
 
+  const unfoldFaces = faceStates.filter(state => !state.unfolded) 
+  if (unfoldFaces.length===1) {
+    return { isComplete: true };
+  }
+
   if (
-    faceStates.some(
+     faceStates.some(
       state => !state.unfolded || state.animProgress < 0.999 || !state.direction
     )
   ) {
@@ -741,6 +852,34 @@ function testCubeNetValidation() {
 
 
 
+// Component to show "x²" in center of face when net is complete
+function XSquaredCenter() {
+  return (
+    <Html
+      transform
+      position={[0, 0, 0.02]}
+      center
+      distanceFactor={10}
+      style={{ pointerEvents: 'none' }}
+    >
+      <div
+        style={{
+          fontSize: '32px',
+          fontWeight: 700,
+          color: '#0f172a',
+          fontFamily: '"Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif',
+          textShadow: '0 2px 6px rgba(0,0,0,0.35)',
+          letterSpacing: '1px',
+        }}
+      >
+        x<sup style={{ fontSize: '18px', fontWeight: 600 }}>2</sup>
+      </div>
+    </Html>
+  );
+}
+
+
+
 // Component to show unfolding direction arrows
 function UnfoldArrows({
   validDirections,
@@ -882,6 +1021,7 @@ function InteractiveCubeFace({
   onUnfold,
   onFoldBack,
   possibleDirections,
+  netIsComplete,
 }: {
   faceIndex: number;
   color: string;
@@ -891,6 +1031,8 @@ function InteractiveCubeFace({
   onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
   possibleDirections: Direction[];
+    showLabel: boolean;
+  netIsComplete:boolean,
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -1057,7 +1199,10 @@ function InteractiveCubeFace({
             <lineBasicMaterial color="#FFD700" opacity={1} transparent={false} linewidth={3} />
           </lineSegments>
         )}
-        {/* Labels removed per user request */}
+        {/* Show x² label when the full net is displayed */}
+        {/* {showLabel && faceState.unfolded && ( */}
+       { netIsComplete?  <XSquaredCenter />: null}
+        {/* )} */}
         {/* Unfold arrows when hovering over folded face */}
         {mode === 'net-building' && !faceState.unfolded && showArrows && (
           <UnfoldArrows
@@ -1079,12 +1224,16 @@ function InteractiveCube({
   worldMatrices,
   onUnfold,
   onFoldBack,
+  showLabels,
+  netIsComplete,
 }: {
   mode: Mode;
   faceStates: FaceState[];
   worldMatrices: THREE.Matrix4[];
   onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
+    showLabels: boolean;
+  netIsComplete:boolean,
 }) {
   const groupRef = useRef<THREE.Group>(null);
 
@@ -1136,6 +1285,8 @@ function InteractiveCube({
           onUnfold={onUnfold}
           onFoldBack={onFoldBack}
           possibleDirections={getPossibleDirections(idx)}
+          showLabel={showLabels}
+          netIsComplete={netIsComplete}
         />
       ))}
     </group>
@@ -1358,7 +1509,13 @@ export default function Cube3DPage() {
     [faceStates, worldMatrices]
   );
   const netIsComplete = netStatus.isComplete;
+  const currentTipData = CUBE_NET_TIPS[currentTip];
+  const highlightedTipContent = useMemo(
+    () => highlightImportantSegments(currentTipData.content, currentTipData.highlights),
+    [currentTipData]
+  );
 
+  // console.log("netIsComplete",netStatus, netIsComplete)
   const unfoldedCount = faceStates.filter(f => f.unfolded).length;
   const progressCount = netIsComplete ? TOTAL_FACES : unfoldedCount;
 
@@ -1398,6 +1555,8 @@ export default function Cube3DPage() {
             worldMatrices={worldMatrices}
             onUnfold={handleUnfold}
             onFoldBack={handleFoldBack}
+            showLabels={netIsComplete}
+            netIsComplete={netIsComplete}
           />
           <OrbitControls
             enableZoom={true}
@@ -1411,185 +1570,362 @@ export default function Cube3DPage() {
       </div>
       
       {/* Header */}
-      <div className="absolute top-20 left-4 text-gray-800 bg-white/90 px-6 py-3 rounded-lg border border-gray-300 shadow-lg">
-        <h1 className="text-2xl font-bold">
-          3D Cube - Net Building
-        </h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Drag to rotate • Scroll to zoom • Pan to move • Hover faces to see unfold directions
-        </p>
+      <div
+        className="absolute top-16 left-4 w-[420px] max-w-md rounded-3xl overflow-hidden shadow-[0_24px_55px_rgba(17,20,50,0.35)]"
+        style={{ background: createGradient(MMC_COLORS.deepNavy, MMC_COLORS.coralGlow) }}
+      >
+        <div className="relative p-6 text-white">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/30 bg-white/15 text-3xl">
+                ✨
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.45em] text-white/60">Immersive Lab</p>
+                <h1 className="text-2xl font-black tracking-tight">3D Cube · Net Studio</h1>
+              </div>
+            </div>
+            <span
+              className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-widest"
+              style={{ backgroundColor: `${MMC_COLORS.aquaBlue}33`, color: MMC_COLORS.sunshineYellow }}
+            >
+              STEAM
+            </span>
+          </div>
+          <p className="mt-4 text-sm leading-relaxed text-white/90">
+            <span style={{ color: MMC_COLORS.sunshineYellow, fontWeight: 600 }}>Drag</span> to explore every face,
+            <span style={{ color: MMC_COLORS.electricBlue, fontWeight: 600 }}> orbit</span> to reveal new angles,
+            and <span style={{ color: MMC_COLORS.energyRed, fontWeight: 600 }}>hover</span> to preview each fold
+            before you commit.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-wide">
+            <span className="flex items-center gap-2 rounded-full bg-white/15 px-3 py-1">
+              <span role="img" aria-label="Orbit">🌀</span> Orbit
+            </span>
+            <span className="flex items-center gap-2 rounded-full bg-white/15 px-3 py-1">
+              <span role="img" aria-label="Drag">🖱️</span> Drag to Rotate
+            </span>
+            <span className="flex items-center gap-2 rounded-full bg-white/15 px-3 py-1">
+              <span role="img" aria-label="Zoom">🔍</span> Scroll to Zoom
+            </span>
+            <span
+              className="flex items-center gap-2 rounded-full px-3 py-1"
+              style={{ backgroundColor: `${MMC_COLORS.sunshineYellow}33`, color: MMC_COLORS.deepNavy }}
+            >
+              <span role="img" aria-label="Aim">🎯</span> Precision Mode
+            </span>
+          </div>
+        </div>
+        <div
+          className="h-1 w-full"
+          style={{ background: createGradient(MMC_COLORS.aquaBlue, MMC_COLORS.sunshineYellow) }}
+        />
       </div>
 
       {/* Progress Counter */}
-        <div className="absolute top-20 right-4 bg-green-50 border-2 border-green-400 rounded-lg px-6 py-3 shadow-lg">
-          <div className="text-center">
-            <div className="text-sm text-gray-600">Faces Unfolded</div>
-            <div className="text-3xl font-bold text-green-600">{progressCount} / {TOTAL_FACES}</div>
-          </div>
-          <div className="mt-2 flex flex-col gap-2">
-            <div className="flex gap-2">
+        <div
+          className="absolute top-16 right-4 w-72 max-w-xs rounded-3xl overflow-hidden shadow-[0_22px_40px_rgba(35,212,255,0.35)]"
+          style={{ background: createGradient(MMC_COLORS.aquaBlue, MMC_COLORS.electricBlue) }}
+        >
+          <div className="relative p-6 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-white/70">Progress</p>
+                <p className="text-3xl font-black leading-tight">{progressCount} / {TOTAL_FACES}</p>
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-sm font-semibold">Faces</span>
+                <span className="text-xs text-white/70">{Math.round((progressCount / TOTAL_FACES) * 100)}%</span>
+              </div>
+            </div>
+            <div className="mt-4 h-2 rounded-full bg-white/25">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(100, (progressCount / TOTAL_FACES) * 100)}%`,
+                  background: createGradient(MMC_COLORS.sunshineYellow, MMC_COLORS.coralGlow)
+                }}
+              />
+            </div>
+            <div className="mt-5 flex flex-col gap-3">
+              <div className="flex gap-3">
+                <button
+                  onClick={handleUndo}
+                  disabled={unfoldHistory.length === 0}
+                  className={`flex-1 rounded-2xl px-3 py-2 text-sm font-semibold transition-transform ${
+                    unfoldHistory.length === 0 ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5'
+                  }`}
+                  style={{
+                    background: unfoldHistory.length === 0
+                      ? 'rgba(255,255,255,0.2)'
+                      : createGradient(MMC_COLORS.coralGlow, MMC_COLORS.energyRed),
+                    color: '#fff'
+                  }}
+                >
+                  ↶ Undo
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="flex-1 rounded-2xl px-3 py-2 text-sm font-semibold text-slate-900 transition-transform hover:-translate-y-0.5"
+                  style={{ backgroundColor: '#ffffff', color: MMC_COLORS.deepNavy }}
+                >
+                  Reset All
+                </button>
+              </div>
               <button
-                onClick={handleUndo}
-                disabled={unfoldHistory.length === 0}
-                className={`flex-1 px-3 py-1 rounded-lg text-sm font-semibold transition-colors ${
-                  unfoldHistory.length === 0
-                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    : 'bg-orange-500 hover:bg-orange-600 text-white'
+                onClick={handleFoldToCube}
+                disabled={unfoldedCount === 0}
+                className={`w-full rounded-2xl px-3 py-3 text-sm font-semibold text-white shadow-lg transition-transform ${
+                  unfoldedCount === 0 ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5'
                 }`}
+                style={{
+                  background: createGradient(MMC_COLORS.sunshineYellow, MMC_COLORS.aquaBlue)
+                }}
               >
-                ↶ Undo
-              </button>
-              <button
-                onClick={handleReset}
-                className="flex-1 px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors"
-              >
-                Reset All
+                🎲 Fold to Cube
               </button>
             </div>
-            <button
-              onClick={handleFoldToCube}
-              disabled={unfoldedCount === 0}
-              className={`w-full px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
-                unfoldedCount === 0
-                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white shadow-md'
-              }`}
-            >
-              🎲 Fold to Cube
-            </button>
           </div>
         </div>
       
       {/* Color Legend */}
-      <div className="absolute bottom-4 right-4 bg-white/90 px-6 py-4 rounded-lg border border-gray-300 shadow-lg">
-        <h2 className="text-gray-800 font-bold mb-3">Face Colors</h2>
-        <div className="space-y-2">
-          {FACE_COLORS.map((color, idx) => (
-            <div key={idx} className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded border border-gray-400" style={{ backgroundColor: color }}></div>
-              <span className="text-gray-800 text-sm">{FACE_LABELS[idx]}</span>
-              {/* {mode === 'net-building' && faceStates[idx].unfolded && (
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-green-600 font-bold">✓</span>
-                  <span className="text-xs text-gray-500">
-                    ({faceStates[idx].gridX}, {faceStates[idx].gridY})
-                  </span>
-                </div>
-              )} */}
+      <div className="absolute bottom-4 right-4 w-80 max-w-sm drop-shadow-2xl">
+        <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-5 backdrop-blur-xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Palette</p>
+              <h2 className="text-lg font-extrabold text-slate-900">Face Moodboard</h2>
             </div>
-          ))}
+            <span
+              className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase"
+              style={{ backgroundColor: `${MMC_COLORS.petalPink}33`, color: MMC_COLORS.coralGlow }}
+            >
+              6 hues
+            </span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {FACE_COLORS.map((color, idx) => (
+              <div
+                key={`${color}-${idx}`}
+                className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white/70 px-3 py-2"
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-8 w-8 rounded-2xl border border-white shadow-sm"
+                    style={{ backgroundColor: color }}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{FACE_LABELS[idx]}</p>
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">{color.toUpperCase()}</p>
+                  </div>
+                </div>
+                <span
+                  className="text-xs font-semibold"
+                  style={{ color: idx % 2 === 0 ? MMC_COLORS.deepNavy : MMC_COLORS.coralGlow }}
+                >
+                  Layer {idx + 1}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Instructions */}
-        <div className="absolute bottom-4 left-4 bg-blue-50 border-2 border-blue-400 rounded-lg px-4 py-3 shadow-lg max-w-xs">
-          <h3 className="font-bold text-blue-800 mb-2">📦 Box Unfolding</h3>
-          <p className="text-xs text-blue-700 mb-2">
-            <strong>Independent unfolding:</strong> Open any face at any time
-          </p>
-          <p className="text-xs text-blue-700 mb-2">
-            <strong>Hover faces:</strong> See unfolding direction arrows
-          </p>
-          <p className="text-xs text-blue-700 mb-2">
-            <strong>Click arrows:</strong> Face rotates 90° around chosen edge
-          </p>
-          <p className="text-xs text-blue-700 mb-2">
-            <strong>Fold back:</strong> Click any unfolded face individually
-          </p>
-          <p className="text-xs text-blue-600">
-            🎯 Like opening flaps on a real cardboard box
-          </p>
+        <div
+          className="absolute bottom-4 left-4 w-72 max-w-xs overflow-hidden rounded-3xl shadow-[0_18px_45px_rgba(255,153,197,0.35)]"
+          style={{ background: createGradient(MMC_COLORS.sunshineYellow, MMC_COLORS.petalPink) }}
+        >
+          <div className="bg-white/80 px-5 py-5 backdrop-blur">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">📦</span>
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Flow</p>
+                <h3 className="text-lg font-bold text-slate-900">Box Unfold Ritual</h3>
+              </div>
+            </div>
+            <div className="mt-4 space-y-3 text-sm text-slate-700">
+              <p>
+                <span style={{ color: MMC_COLORS.energyRed, fontWeight: 700 }}>Independent Unfolds:</span> pop any face
+                open at the moment inspiration strikes.
+              </p>
+              <p>
+                <span style={{ color: MMC_COLORS.electricBlue, fontWeight: 700 }}>Hover Highlights:</span> follow neon
+                arrows to preview the next rotation.
+              </p>
+              <p>
+                <span style={{ color: MMC_COLORS.sunshineYellow, fontWeight: 700 }}>90° Clicks:</span> tap an arrow to
+                swing a square with satisfying precision.
+              </p>
+              <p>
+                <span style={{ color: MMC_COLORS.coralGlow, fontWeight: 700 }}>Fold-Back Magic:</span> reattach any panel
+                with a single click if you want to reimagine the layout.
+              </p>
+            </div>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              🎯 Think of it as remixing a luxury gift box.
+            </p>
+          </div>
         </div>
 
 
       {/* Completion Message */}
       {shouldShowCompletion && (
-        <div style={{ zIndex: 23232323, transform: 'translate(-50%, -50%)' }} className="absolute top-1/2 left-1/2 bg-gradient-to-r from-yellow-50 to-green-50 border-4 border-green-400 rounded-xl px-8 py-6 shadow-2xl">
-          {/* Close Button */}
-          <button
-            onClick={handleCloseCompletion}
-            className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-full transition-colors"
-            aria-label="Close"
+        <div
+          style={{ zIndex: 23232323, transform: 'translate(-50%, -50%)' }}
+          className="absolute top-1/2 left-1/2 w-[440px] max-w-[90vw] overflow-hidden rounded-3xl shadow-[0_30px_60px_rgba(17,23,77,0.4)]"
+        >
+          <div
+            className="relative border border-white/40 px-8 pb-8 pt-10 text-center text-white"
+            style={{ background: createGradient(MMC_COLORS.sunshineYellow, MMC_COLORS.coralGlow) }}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
+            {/* Close Button */}
+            <button
+              onClick={handleCloseCompletion}
+              className="absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+              aria-label="Close"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          
-          <div className="text-center">
-            <div className="text-5xl mb-3">🎉</div>
-            <h2 className="text-3xl font-bold text-green-800 mb-2">Perfect Net!</h2>
-            <p className="text-green-700 text-lg mb-3">You've created a valid cube net!</p>
-            <p className="text-xs text-green-600 mb-4">One of 11 possible distinct nets</p>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-white/20 text-3xl">
+              🎉
+            </div>
+            <h2 className="text-3xl font-black uppercase tracking-wide">Perfect Net!</h2>
+            <p className="mt-2 text-sm uppercase tracking-[0.4em] text-white/80">Geometry unlocked</p>
+            <p className="mt-4 text-base text-white/90">
+              You just shaped one of the
+              <span style={{ color: MMC_COLORS.deepNavy, fontWeight: 700 }}> 11 iconic cube nets</span> — a true spatial victory!
+            </p>
             
             {/* Area Formula Display */}
-            <div className="mt-4 pt-4 border-t-2 border-green-300">
-              <p className="text-lg font-bold text-gray-800 mb-2">
-                Area = sum of 6 squares =
-              </p>
-              <div className="flex items-center justify-center gap-1 flex-wrap mb-2">
+            <div className="mt-6 rounded-2xl bg-white/15 p-4 backdrop-blur">
+              <p className="text-sm uppercase tracking-[0.3em] text-white/70">Surface area mantra</p>
+              <p className="mt-2 text-lg font-semibold text-white">Area = sum of 6 radiant squares</p>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-1 text-2xl font-black">
                 {FACE_COLORS.map((color, idx) => (
-                  <span
-                    key={idx}
-                    className="text-2xl font-bold"
-                    style={{ color: color }}
-                  >
+                  <span key={`area-${idx}`} style={{ color }}>
                     x<sup className="text-lg">2</sup>
-                    {idx < 5 && <span className="text-gray-800 mx-1">+</span>}
+                    {idx < 5 && <span className="mx-1 text-white/80">+</span>}
                   </span>
                 ))}
               </div>
-              <p className="text-2xl font-bold text-gray-800">
-                = 6x<sup className="text-xl">2</sup>
+              <p className="mt-2 text-2xl font-black text-white">
+                = <span style={{ color: MMC_COLORS.deepNavy }}>6x</span>
+                <sup className="text-lg text-white/80">2</sup>
               </p>
             </div>
           </div>
         </div>
       )}
 
-        <div className="absolute left-2 top-48 bg-white border-2 border-black rounded-lg p-6 w-full max-w-md z-20">
-          <div className="flex items-center justify-between mb-4">
-            <button
-              onClick={prevTip}
-              className="text-2xl font-bold text-black hover:text-pink-500 transition-colors"
-            >
-              ‹
-            </button>
-            <h2 className="text-xl font-bold text-black">Cube Net Tips</h2>
-            <button
-              onClick={nextTip}
-              className="text-2xl font-bold text-black hover:text-pink-500 transition-colors"
-            >
-              ›
-            </button>
-          </div>
-          
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">
-              {CUBE_NET_TIPS[currentTip].title}
-            </h3>
-            <p className="text-black leading-relaxed text-sm">
-              {CUBE_NET_TIPS[currentTip].content}
-            </p>
-          </div>
+        <div className="absolute left-4 top-4 z-20 w-[420px] max-w-md drop-shadow-2xl">
+          <div
+            className="relative overflow-hidden rounded-3xl border border-white/40 shadow-[0_20px_45px_rgba(15,23,42,0.25)]"
+            style={{
+              background: `linear-gradient(135deg, ${currentTipData.accent[0]}, ${currentTipData.accent[1]})`
+            }}
+          >
+            <div
+              className="pointer-events-none absolute inset-0 opacity-30"
+              style={{
+                backgroundImage:
+                  'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.7), transparent 45%)'
+              }}
+            />
+            <div className="relative p-1">
+              <div className="rounded-3xl bg-white/95 px-6 py-5 backdrop-blur">
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <span className="flex items-center gap-2 text-slate-700">
+                    <span className="text-2xl">{currentTipData.icon}</span>
+                    Cube Net Tips
+                  </span>
+                  <span
+                    className="rounded-full px-3 py-1 text-[11px]"
+                    style={{
+                      backgroundColor: `${currentTipData.accent[0]}22`,
+                      color: currentTipData.accent[0]
+                    }}
+                  >
+                    {currentTip + 1} / {CUBE_NET_TIPS.length}
+                  </span>
+                </div>
 
-          {/* Dot indicators */}
-          <div className="flex justify-center gap-2 mt-4">
-            {CUBE_NET_TIPS.map((_, index) => (
-              <div
-                key={index}
-                className={`w-3 h-3 rounded-full transition-all ${
-                  index === currentTip ? 'bg-pink-500' : 'bg-pink-200'
-                }`}
-              />
-            ))}
+                <div className="mt-3">
+                  <h3 className="text-xl font-black leading-snug text-slate-900">
+                    {currentTipData.title}
+                  </h3>
+                  <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {currentTipData.tagline}
+                  </p>
+                  <p className="mt-3 text-sm leading-relaxed text-slate-900">
+                    {highlightedTipContent}
+                  </p>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold">
+                  {PRIMARY_EMPHASIS_COLORS.map((color, idx) => (
+                    <span
+                      key={color}
+                      className="rounded-full px-2 py-1"
+                      style={{
+                        backgroundColor: `${color}1a`,
+                        color
+                      }}
+                    >
+                      {idx === 0 ? 'Primary Red' : idx === 1 ? 'Primary Blue' : 'Primary Yellow'}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-5 flex items-center gap-3">
+                  <button
+                    onClick={prevTip}
+                    aria-label="Show previous tip"
+                    className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:text-slate-900"
+                  >
+                    <span className="text-lg">‹</span>
+                    Prev
+                  </button>
+
+                  <div className="flex flex-1 items-center justify-center gap-2">
+                    {CUBE_NET_TIPS.map((tipEntry, index) => (
+                      <span
+                        key={tipEntry.title}
+                        className="h-2 rounded-full transition-all duration-300"
+                        style={{
+                          width: index === currentTip ? '36px' : '10px',
+                          backgroundColor:
+                            index === currentTip ? currentTipData.accent[0] : '#ffdbe8',
+                          opacity: index === currentTip ? 1 : 0.6
+                        }}
+                      />
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={nextTip}
+                    aria-label="Show next tip"
+                    className="flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-0.5"
+                    style={{
+                      background: `linear-gradient(135deg, ${currentTipData.accent[0]}, ${currentTipData.accent[1]})`
+                    }}
+                  >
+                    Next
+                    <span className="text-lg">›</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

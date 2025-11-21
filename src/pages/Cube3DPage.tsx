@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Html } from '@react-three/drei';
@@ -57,7 +57,6 @@ const CUBE_NET_TIPS = [
 
 // Cube face size constant
 const FACE_SIZE = 1.5; // Reduced from 2.0 for smaller cube
-const NET_OFFSET_X = 2.5; // Offset for unfolded net from cube (reduced from 5 for closer first drop)
 
 // Folded (cube) positions and rotations
 const FOLDED_POSITIONS = [
@@ -69,6 +68,184 @@ const FOLDED_POSITIONS = [
   { pos: [-FACE_SIZE / 2, 0, 0], rot: [0, -Math.PI / 2, 0] }// Left
 ];
 
+const HALF_FACE = FACE_SIZE / 2;
+const DIRECTIONS: Direction[] = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+
+type FaceBaseInfo = {
+  center: THREE.Vector3;
+  normal: THREE.Vector3;
+  up: THREE.Vector3;
+  right: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+};
+
+const FACE_BASE_INFO: FaceBaseInfo[] = FOLDED_POSITIONS.map(({ pos, rot }) => {
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(rot[0], rot[1], rot[2]));
+  const center = new THREE.Vector3(pos[0], pos[1], pos[2]);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize();
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion).normalize();
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion).normalize();
+  return { center, normal, up, right, quaternion };
+});
+
+const BASE_MATRICES = FACE_BASE_INFO.map(info => {
+  const matrix = new THREE.Matrix4();
+  matrix.compose(info.center.clone(), info.quaternion.clone(), new THREE.Vector3(1, 1, 1));
+  return matrix;
+});
+
+const vectorKey = (vec: THREE.Vector3) =>
+  `${Math.round(vec.x)},${Math.round(vec.y)},${Math.round(vec.z)}`;
+
+const NORMAL_TO_FACE: Record<string, number> = {};
+FACE_BASE_INFO.forEach((info, idx) => {
+  NORMAL_TO_FACE[vectorKey(info.normal)] = idx;
+});
+
+type HingeEntry = {
+  parentFaceIndex: number;
+  pivot: THREE.Vector3;
+  axis: THREE.Vector3;
+  connection: THREE.Matrix4;
+  childNormal: THREE.Vector3;
+};
+
+const buildParentInverseMatrix = (matrix: THREE.Matrix4) =>
+  new THREE.Matrix4().copy(matrix).invert();
+
+const matrixToMatrix3 = (matrix: THREE.Matrix4) => {
+  const mat3 = new THREE.Matrix3();
+  mat3.setFromMatrix4(matrix);
+  return mat3;
+};
+
+const getDirectionVector = (info: FaceBaseInfo, direction: Direction) => {
+  switch (direction) {
+    case 'UP':
+      return info.up.clone();
+    case 'DOWN':
+      return info.up.clone().negate();
+    case 'LEFT':
+      return info.right.clone().negate();
+    case 'RIGHT':
+    default:
+      return info.right.clone();
+  }
+};
+
+const getAxisVector = (info: FaceBaseInfo, direction: Direction) => {
+  switch (direction) {
+    case 'UP':
+    case 'DOWN':
+      return info.right.clone();
+    case 'LEFT':
+    case 'RIGHT':
+    default:
+      return info.up.clone();
+  }
+};
+
+const HINGE_CONFIG: Array<Partial<Record<Direction, HingeEntry>>> = FACE_BASE_INFO.map(
+  (info, faceIndex) => {
+    const configs: Partial<Record<Direction, HingeEntry>> = {};
+    DIRECTIONS.forEach(direction => {
+      const directionVector = getDirectionVector(info, direction);
+      const parentFaceIndex = NORMAL_TO_FACE[vectorKey(directionVector)];
+      if (parentFaceIndex === undefined) {
+        return;
+      }
+
+      const parentMatrix = BASE_MATRICES[parentFaceIndex];
+      const parentInverse = buildParentInverseMatrix(parentMatrix);
+      const parentInverseMat3 = matrixToMatrix3(parentInverse);
+
+      const pivotWorld = info.center
+        .clone()
+        .add(directionVector.clone().setLength(HALF_FACE));
+      const pivotParent = pivotWorld.clone().applyMatrix4(parentInverse);
+
+      const axisWorld = getAxisVector(info, direction);
+      const axisParent = axisWorld.clone().applyMatrix3(parentInverseMat3).normalize();
+
+      const connection = parentInverse.clone().multiply(BASE_MATRICES[faceIndex]);
+      const childNormalParent = info.normal.clone().applyMatrix3(parentInverseMat3).normalize();
+
+      configs[direction] = {
+        parentFaceIndex,
+        pivot: pivotParent,
+        axis: axisParent,
+        connection,
+        childNormal: childNormalParent,
+      };
+    });
+    return configs;
+  }
+);
+
+const PARENT_NORMAL_REFERENCE = new THREE.Vector3(0, 0, 1);
+
+function buildChildMatrix(
+  hinge: HingeEntry,
+  angle: number,
+  sign: 1 | -1
+): { childMatrix: THREE.Matrix4; rotatedNormal: THREE.Vector3 } {
+  const rotationQuat = new THREE.Quaternion().setFromAxisAngle(hinge.axis, sign * angle);
+  const rotationMatrix = new THREE.Matrix4().makeRotationFromQuaternion(rotationQuat);
+  const pivotTranslate = new THREE.Matrix4().makeTranslation(hinge.pivot.x, hinge.pivot.y, hinge.pivot.z);
+  const pivotTranslateBack = new THREE.Matrix4().makeTranslation(-hinge.pivot.x, -hinge.pivot.y, -hinge.pivot.z);
+  const hingeMatrixLocal = pivotTranslate.clone().multiply(rotationMatrix).multiply(pivotTranslateBack);
+  const childMatrix = hingeMatrixLocal.clone().multiply(hinge.connection);
+  const rotatedNormal = hinge.childNormal
+    .clone()
+    .applyMatrix3(matrixToMatrix3(rotationMatrix))
+    .normalize();
+
+  return { childMatrix, rotatedNormal };
+}
+
+function computeWorldMatrix(
+  faceIndex: number,
+  faceStates: FaceState[],
+  cache: Array<THREE.Matrix4 | null>
+): THREE.Matrix4 {
+  if (cache[faceIndex]) {
+    return cache[faceIndex]!;
+  }
+
+  const state = faceStates[faceIndex];
+  let result: THREE.Matrix4;
+
+  if (!state.unfolded || state.parentFace === null || !state.direction) {
+    result = BASE_MATRICES[faceIndex].clone();
+  } else {
+    const hinge = HINGE_CONFIG[faceIndex][state.direction];
+    if (!hinge) {
+      result = BASE_MATRICES[faceIndex].clone();
+    } else {
+      const parentMatrix = computeWorldMatrix(hinge.parentFaceIndex, faceStates, cache).clone();
+      const angle = (Math.PI / 2) * state.animProgress;
+
+      const positive = buildChildMatrix(hinge, angle, 1);
+      const negative = buildChildMatrix(hinge, angle, -1);
+      const chosen =
+        positive.rotatedNormal.dot(PARENT_NORMAL_REFERENCE) >=
+        negative.rotatedNormal.dot(PARENT_NORMAL_REFERENCE)
+          ? positive
+          : negative;
+
+      result = parentMatrix.multiply(chosen.childMatrix);
+    }
+  }
+
+  cache[faceIndex] = result;
+  return result;
+}
+
+function computeAllWorldMatrices(faceStates: FaceState[]): THREE.Matrix4[] {
+  const cache = new Array<THREE.Matrix4 | null>(FACE_COLORS.length).fill(null);
+  return faceStates.map((_, idx) => computeWorldMatrix(idx, faceStates, cache).clone());
+}
+
 type FaceState = {
   unfolded: boolean;
   animProgress: number;
@@ -78,19 +255,7 @@ type FaceState = {
   parentFace: number | null;
 };
 
-type DropZone = {
-  targetFaceIndex: number;
-  direction: Direction;
-  gridX: number;
-  gridY: number;
-};
 
-type ValidDropZone = {
-  parentFaceIndex: number;
-  direction: Direction;
-  gridX: number;
-  gridY: number;
-};
 
 // Cube face relationships - which faces are opposite to each other
 const OPPOSITE_FACES: Record<number, number> = {
@@ -480,87 +645,7 @@ function testCubeNetValidation() {
   console.log('Validation tests completed.');
 }
 
-// Calculate all valid drop zones for a dragged face
-function calculateAllValidDropZones(
-  draggedFaceIndex: number,
-  currentFaceStates: FaceState[]
-): ValidDropZone[] {
-  const validDropZones: ValidDropZone[] = [];
-  const directions: Direction[] = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
-  
-  // For each unfolded face
-  currentFaceStates.forEach((faceState, parentFaceIndex) => {
-    if (!faceState.unfolded) return;
-    
-    // Check all 4 directions around this face
-    directions.forEach(direction => {
-      // Calculate the grid position for this direction
-      let newGridX = faceState.gridX;
-      let newGridY = faceState.gridY;
-      
-      switch (direction) {
-        case 'UP':
-          newGridY = faceState.gridY - 1;
-          break;
-        case 'DOWN':
-          newGridY = faceState.gridY + 1;
-          break;
-        case 'LEFT':
-          newGridX = faceState.gridX - 1;
-          break;
-        case 'RIGHT':
-          newGridX = faceState.gridX + 1;
-          break;
-      }
-      
-      // Validate this placement
-      const isValid = isValidNetPlacement(
-        draggedFaceIndex,
-        newGridX,
-        newGridY,
-        parentFaceIndex,
-        currentFaceStates
-      );
-      
-      if (isValid) {
-        validDropZones.push({
-          parentFaceIndex,
-          direction,
-          gridX: newGridX,
-          gridY: newGridY
-        });
-      }
-    });
-  });
-  
-  return validDropZones;
-}
 
-// Helper to detect which edge of a face is closest to a point
-function getClosestEdge(localPoint: THREE.Vector3): Direction {
-  const x = localPoint.x;
-  const y = localPoint.y;
-  
-  // Determine which edge is closest
-  const distances = {
-    UP: Math.abs(y - 1),      // Top edge at y=1
-    DOWN: Math.abs(y + 1),    // Bottom edge at y=-1
-    LEFT: Math.abs(x + 1),    // Left edge at x=-1
-    RIGHT: Math.abs(x - 1),   // Right edge at x=1
-  };
-  
-  let closestEdge: Direction = 'UP';
-  let minDistance = Infinity;
-  
-  Object.entries(distances).forEach(([edge, dist]) => {
-    if (dist < minDistance) {
-      minDistance = dist;
-      closestEdge = edge as Direction;
-    }
-  });
-  
-  return closestEdge;
-}
 
 // Component to show "x²" in center of face
 function XSquaredCenter() {
@@ -585,166 +670,247 @@ function XSquaredCenter() {
   );
 }
 
-// Drop indicator component
-function DropIndicator({ 
-  position, 
-  direction 
-}: { 
-  position: [number, number, number];
-  direction: Direction;
+
+// Component to show unfolding direction arrows
+function UnfoldArrows({
+  validDirections,
+  onDirectionClick,
+  onArrowHover,
+  onArrowLeave
+}: {
+  validDirections: Direction[];
+  onDirectionClick: (direction: Direction) => void;
+  onArrowHover: () => void;
+  onArrowLeave: () => void;
 }) {
-  const indicatorSize = FACE_SIZE * 1.1; // Slightly larger than face
+  const allDirections: Direction[] = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+
   return (
-    <group position={position}>
-      <mesh>
-        <planeGeometry args={[indicatorSize, indicatorSize]} />
-        <meshBasicMaterial color="#00ff00" transparent opacity={0.3} side={THREE.DoubleSide} />
-      </mesh>
-      <lineSegments>
-        <edgesGeometry args={[new THREE.PlaneGeometry(indicatorSize, indicatorSize)]} />
-        <lineBasicMaterial color="#00ff00" linewidth={4} />
-      </lineSegments>
-      {/* Arrow indicator */}
-      <Html center>
-        <div className="text-4xl pointer-events-none">
-          {direction === 'UP' && '↑'}
-          {direction === 'DOWN' && '↓'}
-          {direction === 'LEFT' && '←'}
-          {direction === 'RIGHT' && '→'}
-        </div>
+    <>
+      {allDirections.map(direction => {
+        const isValid = validDirections.includes(direction);
+        return (
+          <group key={direction}>
+            {direction === 'UP' && (
+              <Html position={[0, 0.6, 0.01]} center>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isValid) onDirectionClick('UP');
+                  }}
+                  onPointerOver={(e) => {
+                    e.stopPropagation();
+                    onArrowHover();
+                  }}
+                  onPointerOut={(e) => {
+                    e.stopPropagation();
+                    onArrowLeave();
+                  }}
+                  className={`text-4xl transition-colors rounded-full p-3 border-2 shadow-lg select-none ${
+                    isValid
+                      ? 'text-green-600 hover:text-green-800 active:text-green-900 bg-white/90 border-green-300 hover:bg-green-50 active:bg-green-100'
+                      : 'text-gray-400 bg-gray-100 border-gray-300 cursor-not-allowed'
+                  }`}
+                  disabled={!isValid}
+                >
+                  ↑
+                </button>
       </Html>
+            )}
+            {direction === 'DOWN' && (
+              <Html position={[0, -0.6, 0.01]} center>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isValid) onDirectionClick('DOWN');
+                  }}
+                  onPointerOver={(e) => {
+                    e.stopPropagation();
+                    onArrowHover();
+                  }}
+                  onPointerOut={(e) => {
+                    e.stopPropagation();
+                    onArrowLeave();
+                  }}
+                  className={`text-4xl transition-colors rounded-full p-3 border-2 shadow-lg select-none ${
+                    isValid
+                      ? 'text-green-600 hover:text-green-800 active:text-green-900 bg-white/90 border-green-300 hover:bg-green-50 active:bg-green-100'
+                      : 'text-gray-400 bg-gray-100 border-gray-300 cursor-not-allowed'
+                  }`}
+                  disabled={!isValid}
+                >
+                  ↓
+                </button>
+              </Html>
+            )}
+            {direction === 'LEFT' && (
+              <Html position={[-0.6, 0, 0.01]} center>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isValid) onDirectionClick('LEFT');
+                  }}
+                  onPointerOver={(e) => {
+                    e.stopPropagation();
+                    onArrowHover();
+                  }}
+                  onPointerOut={(e) => {
+                    e.stopPropagation();
+                    onArrowLeave();
+                  }}
+                  className={`text-4xl transition-colors rounded-full p-3 border-2 shadow-lg select-none ${
+                    isValid
+                      ? 'text-green-600 hover:text-green-800 active:text-green-900 bg-white/90 border-green-300 hover:bg-green-50 active:bg-green-100'
+                      : 'text-gray-400 bg-gray-100 border-gray-300 cursor-not-allowed'
+                  }`}
+                  disabled={!isValid}
+                >
+                  ←
+                </button>
+              </Html>
+            )}
+            {direction === 'RIGHT' && (
+              <Html position={[0.6, 0, 0.01]} center>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isValid) onDirectionClick('RIGHT');
+                  }}
+                  onPointerOver={(e) => {
+                    e.stopPropagation();
+                    onArrowHover();
+                  }}
+                  onPointerOut={(e) => {
+                    e.stopPropagation();
+                    onArrowLeave();
+                  }}
+                  className={`text-4xl transition-colors rounded-full p-3 border-2 shadow-lg select-none ${
+                    isValid
+                      ? 'text-green-600 hover:text-green-800 active:text-green-900 bg-white/90 border-green-300 hover:bg-green-50 active:bg-green-100'
+                      : 'text-gray-400 bg-gray-100 border-gray-300 cursor-not-allowed'
+                  }`}
+                  disabled={!isValid}
+                >
+                  →
+                </button>
+              </Html>
+            )}
     </group>
+        );
+      })}
+    </>
   );
 }
 
-// Individual Face Component with drag and drop
+// Individual Face Component with unfolding
 function InteractiveCubeFace({
   faceIndex,
   color,
   mode,
   faceState,
-  isDragging,
-  dropZone,
-  onDragStart,
-  onDragOver,
-  onDrop,
+  worldMatrix,
+  onUnfold,
   onFoldBack,
   isNetComplete,
+  possibleDirections,
 }: {
   faceIndex: number;
   color: string;
   mode: Mode;
   faceState: FaceState;
-  isDragging: boolean;
-  dropZone: DropZone | null;
-  onDragStart: (faceIndex: number) => void;
-  onDragOver: (faceIndex: number, point: THREE.Vector3) => void;
-  onDrop: (faceIndex: number) => void;
+  worldMatrix: THREE.Matrix4;
+  onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
   isNetComplete: boolean;
+  possibleDirections: Direction[];
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
-  const [isDragTarget, setIsDragTarget] = useState(false);
-
-  const handlePointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
-    e.stopPropagation();
-    if (mode === 'net-building' && !faceState.unfolded) {
-      // @ts-expect-error - setPointerCapture exists on event target
-      e.target.setPointerCapture(e.pointerId);
-      onDragStart(faceIndex);
-    }
-  }, [mode, faceState.unfolded, faceIndex, onDragStart]);
-
-  const handlePointerMove = useCallback((e: ThreeEvent<PointerEvent>) => {
-    if (mode === 'net-building' && faceState.unfolded && isDragging) {
-      e.stopPropagation();
-      // Convert intersection point to local coordinates
-      const worldPoint = e.point;
-      const localPoint = groupRef.current?.worldToLocal(worldPoint.clone()) || new THREE.Vector3();
-      setIsDragTarget(true);
-      onDragOver(faceIndex, localPoint);
-    } else {
-      setIsDragTarget(false);
-    }
-  }, [mode, faceState.unfolded, isDragging, faceIndex, onDragOver]);
-
-  const handlePointerUp = useCallback((e: ThreeEvent<PointerEvent>) => {
-    e.stopPropagation();
-    if (mode === 'net-building') {
-      // @ts-expect-error - releasePointerCapture exists on event target
-      e.target.releasePointerCapture(e.pointerId);
-      // Call drop if we're dragging and hovering over an unfolded face
-      if (isDragging && faceState.unfolded) {
-        console.log('Pointer up on unfolded face:', faceIndex);
-        onDrop(faceIndex);
-      }
-    }
-  }, [mode, isDragging, faceState.unfolded, faceIndex, onDrop]);
+  const [showArrows, setShowArrows] = useState(false);
+  const [arrowHovered, setArrowHovered] = useState(false);
+  const hideArrowsTimeout = useRef<number | null>(null);
 
   const handleClick = useCallback((e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
-    if (mode === 'net-building' && faceState.unfolded && !isDragging) {
+    if (mode === 'net-building' && faceState.unfolded) {
       onFoldBack(faceIndex);
     }
-  }, [mode, faceState.unfolded, isDragging, faceIndex, onFoldBack]);
+  }, [mode, faceState.unfolded, faceIndex, onFoldBack]);
+
+  const handleDirectionClick = useCallback((direction: Direction) => {
+    if (mode === 'net-building' && !faceState.unfolded) {
+      setShowArrows(false);
+      setArrowHovered(false);
+      if (hideArrowsTimeout.current) {
+        clearTimeout(hideArrowsTimeout.current);
+        hideArrowsTimeout.current = null;
+      }
+      onUnfold(faceIndex, direction);
+    }
+  }, [mode, faceState.unfolded, faceIndex, onUnfold]);
+
+  const handleArrowHover = useCallback(() => {
+    setArrowHovered(true);
+    if (hideArrowsTimeout.current) {
+      clearTimeout(hideArrowsTimeout.current);
+      hideArrowsTimeout.current = null;
+    }
+  }, []);
+
+  const handleArrowLeave = useCallback(() => {
+    setArrowHovered(false);
+    // Only hide arrows if face is also not hovered
+    if (!hovered) {
+      hideArrowsTimeout.current = setTimeout(() => {
+        setShowArrows(false);
+      }, 200);
+    }
+  }, [hovered]);
+
+  useEffect(() => {
+    return () => {
+      if (hideArrowsTimeout.current) {
+        clearTimeout(hideArrowsTimeout.current);
+      }
+    };
+  }, []);
+
+  const worldMatrixRef = useRef(worldMatrix.clone());
+  useEffect(() => {
+    worldMatrixRef.current.copy(worldMatrix);
+  }, [worldMatrix]);
+
+  const tempPosition = useMemo(() => new THREE.Vector3(), []);
+  const tempQuaternion = useMemo(() => new THREE.Quaternion(), []);
+  const tempScale = useMemo(() => new THREE.Vector3(1, 1, 1), []);
 
   useFrame(() => {
     if (!groupRef.current || !meshRef.current) return;
     
-    const foldedPos = FOLDED_POSITIONS[faceIndex];
-    const animProgress = faceState.animProgress;
-    
-    if (faceState.unfolded && faceState.direction) {
-      // Calculate unfolded position based on 2D grid position
-      const gridX = faceState.gridX;
-      const gridY = faceState.gridY;
-      
-      // Convert grid position to 3D position
-      // Offset the net to the right so it's away from the cube
-      const targetX = gridX * FACE_SIZE + NET_OFFSET_X;
-      const targetY = -gridY * FACE_SIZE;
-      const targetZ = 0.5;
-      
-      // Interpolate from folded to unfolded position
-      const x = THREE.MathUtils.lerp(foldedPos.pos[0], targetX, animProgress);
-      const y = THREE.MathUtils.lerp(foldedPos.pos[1], targetY, animProgress);
-      const z = THREE.MathUtils.lerp(foldedPos.pos[2], targetZ, animProgress);
-      
-      groupRef.current.position.set(x, y, z);
-      
-      // Interpolate rotation to flat
-      const rotX = THREE.MathUtils.lerp(foldedPos.rot[0], 0, animProgress);
-      const rotY = THREE.MathUtils.lerp(foldedPos.rot[1], 0, animProgress);
-      const rotZ = THREE.MathUtils.lerp(foldedPos.rot[2], 0, animProgress);
-      
-      groupRef.current.rotation.set(rotX, rotY, rotZ);
-    } else {
-      // Folded position
-      groupRef.current.position.set(
-        foldedPos.pos[0],
-        foldedPos.pos[1],
-        foldedPos.pos[2]
-      );
-      groupRef.current.rotation.set(
-        foldedPos.rot[0],
-        foldedPos.rot[1],
-        foldedPos.rot[2]
-      );
-    }
+    worldMatrixRef.current.decompose(tempPosition, tempQuaternion, tempScale);
+    groupRef.current.position.copy(tempPosition);
+    groupRef.current.quaternion.copy(tempQuaternion);
 
-    // Hover/drag effect
+    let targetScale = 1;
     if (mode === 'net-building') {
       if (!faceState.unfolded && hovered) {
-        const scale = 1.05;
-        groupRef.current.scale.set(scale, scale, scale);
-      } else {
-        groupRef.current.scale.set(1, 1, 1);
+        targetScale = 1.05;
       }
-    } else {
-      groupRef.current.scale.set(1, 1, 1);
     }
+
+    // Add bounce effect during unfolding animation
+    if (faceState.unfolded && faceState.animProgress > 0 && faceState.animProgress < 1) {
+      // Add a slight scale bounce during unfolding
+      const bounce = Math.sin(faceState.animProgress * Math.PI * 2) * 0.05;
+      targetScale = 1 + bounce;
+    }
+
+    // Smooth scale interpolation
+    const currentScale = groupRef.current.scale.x;
+    const scaleDiff = targetScale - currentScale;
+    const newScale = currentScale + scaleDiff * 0.1; // Smooth interpolation
+    groupRef.current.scale.set(newScale, newScale, newScale);
 
     // Update material opacity and emissive for highlighting
     if (meshRef.current.material instanceof THREE.MeshStandardMaterial) {
@@ -752,9 +918,6 @@ function InteractiveCubeFace({
         if (!faceState.unfolded && hovered) {
           meshRef.current.material.opacity = 1.0;
           meshRef.current.material.emissive = new THREE.Color(0x333333);
-        } else if (faceState.unfolded && isDragTarget) {
-          meshRef.current.material.opacity = 1.0;
-          meshRef.current.material.emissive = new THREE.Color(0x444444);
         } else {
           meshRef.current.material.opacity = 0.9;
           meshRef.current.material.emissive = new THREE.Color(0x000000);
@@ -771,19 +934,18 @@ function InteractiveCubeFace({
       <group ref={groupRef}>
         <mesh 
           ref={meshRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
           onClick={handleClick}
           onPointerOver={(e) => {
             e.stopPropagation();
             if (mode === 'net-building') {
-              if (!faceState.unfolded) {
                 setHovered(true);
-                document.body.style.cursor = 'grab';
-              } else if (isDragging) {
-                setIsDragTarget(true);
-                document.body.style.cursor = 'crosshair';
+              if (!faceState.unfolded) {
+                setShowArrows(true);
+                if (hideArrowsTimeout.current) {
+                  clearTimeout(hideArrowsTimeout.current);
+                  hideArrowsTimeout.current = null;
+                }
+                document.body.style.cursor = 'pointer';
               } else {
                 document.body.style.cursor = 'pointer';
               }
@@ -793,10 +955,15 @@ function InteractiveCubeFace({
             e.stopPropagation();
             if (mode === 'net-building') {
               setHovered(false);
-              setIsDragTarget(false);
-              if (!isDragging) {
-                document.body.style.cursor = 'default';
+              if (!faceState.unfolded && !arrowHovered) {
+                // Only hide arrows if neither face nor arrows are hovered
+                hideArrowsTimeout.current = setTimeout(() => {
+                  if (!arrowHovered) {
+                    setShowArrows(false);
+                  }
+                }, 200); // Shorter delay since arrows maintain hover
               }
+              document.body.style.cursor = 'default';
             }
           }}
         >
@@ -822,56 +989,76 @@ function InteractiveCubeFace({
             <lineBasicMaterial color="#FFD700" opacity={1} transparent={false} linewidth={3} />
           </lineSegments>
         )}
-        {/* Drag target highlight for unfolded faces */}
-        {mode === 'net-building' && faceState.unfolded && isDragTarget && (
-          <lineSegments>
-            <edgesGeometry args={[new THREE.PlaneGeometry(FACE_SIZE * 1.075, FACE_SIZE * 1.075)]} />
-            <lineBasicMaterial color="#00AAFF" opacity={1} transparent={false} linewidth={4} />
-          </lineSegments>
-        )}
         {/* Show x² in center when net is complete */}
         {faceState.unfolded && isNetComplete && (
           <XSquaredCenter />
         )}
+        {/* Unfold arrows when hovering over folded face */}
+        {mode === 'net-building' && !faceState.unfolded && showArrows && (
+          <UnfoldArrows
+            validDirections={possibleDirections}
+            onDirectionClick={handleDirectionClick}
+            onArrowHover={handleArrowHover}
+            onArrowLeave={handleArrowLeave}
+          />
+        )}
       </group>
-      {/* Drop indicator */}
-      {dropZone && dropZone.targetFaceIndex === faceIndex && faceState.unfolded && (
-        <DropIndicator
-          position={[dropZone.gridX * FACE_SIZE + NET_OFFSET_X, -dropZone.gridY * FACE_SIZE, 0.5]}
-          direction={dropZone.direction}
-        />
-      )}
     </>
   );
 }
 
 // Main Cube Component
-function InteractiveCube({ 
-  mode, 
+function InteractiveCube({
+  mode,
   faceStates,
-  draggedFaceIndex,
-  dropZone,
-  validDropZones,
-  onDragStart,
-  onDragOver,
-  onDrop,
+  onUnfold,
   onFoldBack,
   isNetComplete,
-}: { 
+}: {
   mode: Mode;
   faceStates: FaceState[];
-  draggedFaceIndex: number | null;
-  dropZone: DropZone | null;
-  validDropZones: ValidDropZone[];
-  onDragStart: (faceIndex: number) => void;
-  onDragOver: (faceIndex: number, point: THREE.Vector3) => void;
-  onDrop: (faceIndex: number) => void;
+  onUnfold: (faceIndex: number, direction: Direction) => void;
   onFoldBack: (faceIndex: number) => void;
   isNetComplete: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
 
-  // No auto-rotation - cube stays in same position for both modes
+  const worldMatrices = useMemo(() => computeAllWorldMatrices(faceStates), [faceStates]);
+
+  const createsCycle = useCallback(
+    (candidateParent: number, faceIndex: number) => {
+      let current: number | null = candidateParent;
+      while (current !== null) {
+        if (current === faceIndex) {
+          return true;
+        }
+        const next: number | null =
+          current !== null ? faceStates[current]?.parentFace ?? null : null;
+        current = next;
+      }
+      return false;
+    },
+    [faceStates]
+  );
+
+  // Calculate possible directions for each face
+  const getPossibleDirections = (faceIndex: number): Direction[] => {
+    if (faceStates[faceIndex].unfolded) return [];
+
+    const configs = HINGE_CONFIG[faceIndex];
+    const valid: Direction[] = [];
+
+    DIRECTIONS.forEach(direction => {
+      const hinge = configs?.[direction];
+      if (!hinge) return;
+      if (createsCycle(hinge.parentFaceIndex, faceIndex)) {
+        return;
+      }
+      valid.push(direction);
+    });
+
+    return valid;
+  };
 
   return (
     <group ref={groupRef}>
@@ -882,21 +1069,11 @@ function InteractiveCube({
           color={color}
           mode={mode}
           faceState={faceStates[idx]}
-          isDragging={draggedFaceIndex !== null}
-          dropZone={dropZone}
-          onDragStart={onDragStart}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
+          worldMatrix={worldMatrices[idx]}
+          onUnfold={onUnfold}
           onFoldBack={onFoldBack}
           isNetComplete={isNetComplete}
-        />
-      ))}
-      {/* Render all valid drop zones */}
-      {draggedFaceIndex !== null && validDropZones.map((zone, idx) => (
-        <DropIndicator
-          key={`drop-zone-${idx}`}
-          position={[zone.gridX * FACE_SIZE + NET_OFFSET_X, -zone.gridY * FACE_SIZE, 0.5]}
-          direction={zone.direction}
+          possibleDirections={getPossibleDirections(idx)}
         />
       ))}
     </group>
@@ -921,22 +1098,23 @@ export default function Cube3DPage() {
       parentFace: null
     }))
   );
-  const [draggedFaceIndex, setDraggedFaceIndex] = useState<number | null>(null);
-  const [dropZone, setDropZone] = useState<DropZone | null>(null);
-  const [validDropZones, setValidDropZones] = useState<ValidDropZone[]>([]);
   const [unfoldHistory, setUnfoldHistory] = useState<number[]>([]); // Track order of unfolded faces
   const [currentTip, setCurrentTip] = useState(0); // Current tip index for tips box
   const [isCompletionClosed, setIsCompletionClosed] = useState(false); // Track if completion popup is closed
 
-  // Animate face unfolding
+  // Smooth mechanical animation for box unfolding
   const animateFace = useCallback((faceIndex: number, targetProgress: number) => {
     const startTime = Date.now();
-    const duration = 800;
+    const duration = 800; // Consistent duration for both unfold and fold
     
     const animate = () => {
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
+
+      // Smooth ease-in-out for mechanical motion
+      const eased = progress < 0.5
+        ? 2 * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 2) / 2;
       
       setFaceStates(prev => {
         const newStates = [...prev];
@@ -965,136 +1143,35 @@ export default function Cube3DPage() {
     requestAnimationFrame(animate);
   }, []);
 
-  const handleDragStart = useCallback((faceIndex: number) => {
-    console.log('Drag started for face:', faceIndex);
-    setDraggedFaceIndex(faceIndex);
-    
-    // Calculate all valid drop zones for this face
-    const validZones = calculateAllValidDropZones(faceIndex, faceStates);
-    console.log('Valid drop zones:', validZones);
-    setValidDropZones(validZones);
-    
-    document.body.style.cursor = 'grabbing';
-  }, [faceStates]);
-
-  const handleDragOver = useCallback((targetFaceIndex: number, localPoint: THREE.Vector3) => {
-    if (draggedFaceIndex === null) return;
-    
-    // Get the edge closest to where the user is hovering
-    const direction = getClosestEdge(localPoint);
-    
-    // Calculate the grid position for this drop
-    const targetFace = faceStates[targetFaceIndex];
-    if (!targetFace.unfolded) return;
-    
-    let newGridX = targetFace.gridX;
-    let newGridY = targetFace.gridY;
-    
-    switch (direction) {
-      case 'UP':
-        newGridY = targetFace.gridY - 1;
-        break;
-      case 'DOWN':
-        newGridY = targetFace.gridY + 1;
-        break;
-      case 'LEFT':
-        newGridX = targetFace.gridX - 1;
-        break;
-      case 'RIGHT':
-        newGridX = targetFace.gridX + 1;
-        break;
-    }
-    
-    // Check if this position matches any of the valid drop zones
-    const matchingZone = validDropZones.find(
-      zone => zone.gridX === newGridX && zone.gridY === newGridY
-    );
-    
-    if (matchingZone) {
-      console.log('Hovering over valid drop zone:', matchingZone);
-      setDropZone({
-        targetFaceIndex,
-        direction,
-        gridX: newGridX,
-        gridY: newGridY
-      });
-    } else {
-      setDropZone(null);
-    }
-  }, [draggedFaceIndex, faceStates, validDropZones]);
-
-  const handleDrop = useCallback((targetFaceIndex: number) => {
-    console.log('Drop triggered on face:', targetFaceIndex, 'draggedFace:', draggedFaceIndex, 'dropZone:', dropZone);
-    
-    if (draggedFaceIndex === null) {
-      console.log('No dragged face, aborting');
-      setDraggedFaceIndex(null);
-      setDropZone(null);
-      document.body.style.cursor = 'default';
+  const handleUnfold = useCallback((faceIndex: number, direction: Direction) => {
+    const hinge = HINGE_CONFIG[faceIndex][direction];
+    if (!hinge) {
       return;
     }
-    
-    // Get the first unfolded face count
-    const unfoldedCount = faceStates.filter(f => f.unfolded).length;
-    console.log('Unfolded count:', unfoldedCount);
-    
-    // If this is the first face, place it at origin (targetFaceIndex === -1 means global drop)
-    if (unfoldedCount === 0 && (targetFaceIndex === -1 || !dropZone)) {
-      console.log('Placing first face at origin');
-      setFaceStates(prev => {
-        const newStates = [...prev];
-        newStates[draggedFaceIndex] = {
-          ...newStates[draggedFaceIndex],
-          unfolded: true,
-          gridX: 0,
-          gridY: 0,
-          direction: 'UP',
-          parentFace: null
-        };
-        return newStates;
-      });
-      animateFace(draggedFaceIndex, 1);
-      // Add to history
-      setUnfoldHistory(prev => [...prev, draggedFaceIndex]);
-    } else if (dropZone) {
-      // Place the face at the drop zone - use dropZone info directly
-      console.log('Placing face at drop zone:', dropZone);
-      setFaceStates(prev => {
-        const newStates = [...prev];
-        newStates[draggedFaceIndex] = {
-          ...newStates[draggedFaceIndex],
-          unfolded: true,
-          gridX: dropZone.gridX,
-          gridY: dropZone.gridY,
-          direction: dropZone.direction,
-          parentFace: dropZone.targetFaceIndex
-        };
-        return newStates;
-      });
-      animateFace(draggedFaceIndex, 1);
-      // Add to history
-      setUnfoldHistory(prev => [...prev, draggedFaceIndex]);
-    } else {
-      console.log('Drop zone invalid or missing, aborting drop');
-    }
-    
-    setDraggedFaceIndex(null);
-    setDropZone(null);
-    setValidDropZones([]);
-    document.body.style.cursor = 'default';
-  }, [draggedFaceIndex, dropZone, faceStates, animateFace]);
 
-  const handleFoldBack = useCallback((faceIndex: number) => {
-    // Check if any faces depend on this one
-    const hasDependents = faceStates.some(
-      (state, idx) => idx !== faceIndex && state.parentFace === faceIndex && state.unfolded
-    );
-    
-    if (hasDependents) return;
-    
     setFaceStates(prev => {
       const newStates = [...prev];
       newStates[faceIndex] = {
+        ...newStates[faceIndex],
+        unfolded: true,
+        gridX: 0, // Not used in new system
+        gridY: 0, // Not used in new system
+        direction,
+        parentFace: hinge.parentFaceIndex
+      };
+      return newStates;
+    });
+
+    animateFace(faceIndex, 1);
+    setUnfoldHistory(prev => [...prev, faceIndex]);
+  }, [animateFace]);
+
+  const handleFoldBack = useCallback((faceIndex: number) => {
+    // Allow folding back any unfolded face individually
+    setFaceStates(prev => {
+      const newStates = [...prev];
+      newStates[faceIndex] = {
+        ...newStates[faceIndex],
         unfolded: false,
         animProgress: 0,
         direction: null,
@@ -1107,7 +1184,7 @@ export default function Cube3DPage() {
     animateFace(faceIndex, 0);
     // Remove from history
     setUnfoldHistory(prev => prev.filter(idx => idx !== faceIndex));
-  }, [faceStates, animateFace]);
+  }, [animateFace]);
 
   const handleUndo = useCallback(() => {
     if (unfoldHistory.length === 0) return;
@@ -1206,9 +1283,6 @@ export default function Cube3DPage() {
       gridY: 0,
       parentFace: null
     })));
-    setDraggedFaceIndex(null);
-    setDropZone(null);
-    setValidDropZones([]);
     setUnfoldHistory([]);
   }, []);
 
@@ -1236,33 +1310,7 @@ export default function Cube3DPage() {
     <div className="w-full h-screen bg-white">
 
       {/* 3D Canvas */}
-      <div 
-        className="w-full h-full"
-        onPointerUp={(e) => {
-          // Global drop handler
-          if (mode === 'net-building' && draggedFaceIndex !== null) {
-            e.preventDefault();
-            const unfoldedCount = faceStates.filter(f => f.unfolded).length;
-            
-            // If first face, drop at origin
-            if (unfoldedCount === 0) {
-              console.log('Global drop: Placing first face at origin');
-              handleDrop(-1); // -1 indicates drop anywhere
-            } else if (dropZone) {
-              // If we have a valid drop zone, use it
-              console.log('Global drop: Using drop zone');
-              handleDrop(dropZone.targetFaceIndex);
-            } else {
-              // No valid drop, just clear drag state
-              console.log('Global drop: Invalid drop, clearing state');
-              setDraggedFaceIndex(null);
-              setDropZone(null);
-              setValidDropZones([]);
-              document.body.style.cursor = 'default';
-            }
-          }
-        }}
-      >
+      <div className="w-full h-full">
         <Canvas>
           <PerspectiveCamera 
             makeDefault 
@@ -1277,20 +1325,15 @@ export default function Cube3DPage() {
           <InteractiveCube 
             mode={mode} 
             faceStates={faceStates}
-            draggedFaceIndex={draggedFaceIndex}
-            dropZone={dropZone}
-            validDropZones={validDropZones}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
+            onUnfold={handleUnfold}
             onFoldBack={handleFoldBack}
             isNetComplete={unfoldedCount === 6}
           />
           <OrbitControls
-            enableZoom={draggedFaceIndex === null}
-            enablePan={draggedFaceIndex === null}
-            enableRotate={draggedFaceIndex === null}
-            enabled={draggedFaceIndex === null}
+            enableZoom={true}
+            enablePan={true}
+            enableRotate={true}
+            enabled={true}
             minDistance={2}
             maxDistance={15}
           />
@@ -1303,10 +1346,7 @@ export default function Cube3DPage() {
           3D Cube - Net Building
         </h1>
         <p className="text-sm text-gray-600 mt-1">
-          {draggedFaceIndex !== null
-            ? 'Drag over an unfolded face edge to attach'
-            : 'Drag to rotate • Scroll to zoom • Pan to move • Drag faces to build net'
-          }
+          Drag to rotate • Scroll to zoom • Pan to move • Hover faces to see unfold directions
         </p>
       </div>
 
@@ -1373,35 +1413,24 @@ export default function Cube3DPage() {
 
       {/* Instructions */}
         <div className="absolute bottom-4 left-4 bg-blue-50 border-2 border-blue-400 rounded-lg px-4 py-3 shadow-lg max-w-xs">
-          <h3 className="font-bold text-blue-800 mb-2">💡 Drag & Drop Net Building</h3>
+          <h3 className="font-bold text-blue-800 mb-2">📦 Box Unfolding</h3>
           <p className="text-xs text-blue-700 mb-2">
-            <strong>First face:</strong> Drag from cube, drop anywhere
+            <strong>Independent unfolding:</strong> Open any face at any time
           </p>
           <p className="text-xs text-blue-700 mb-2">
-            <strong>Next faces:</strong> Drag and drop onto an unfolded face edge
+            <strong>Hover faces:</strong> See unfolding direction arrows
           </p>
           <p className="text-xs text-blue-700 mb-2">
-            <strong>Smart Validation:</strong> Only valid cube net placements allowed
+            <strong>Click arrows:</strong> Face rotates 90° around chosen edge
           </p>
           <p className="text-xs text-blue-700 mb-2">
-            <strong>Fold back:</strong> Click an unfolded face or use Undo
+            <strong>Fold back:</strong> Click any unfolded face individually
           </p>
           <p className="text-xs text-blue-600">
-            🟢 Green = Valid • ⛔ No preview = Invalid placement
+            🎯 Like opening flaps on a real cardboard box
           </p>
         </div>
 
-      {/* Dragging Hint */}
-      {mode === 'net-building' && draggedFaceIndex !== null && (
-        <div className="absolute top-1/3 left-1/2 transform -translate-x-1/2 bg-yellow-50 border-2 border-yellow-400 rounded-lg px-6 py-3 shadow-xl">
-          <p className="text-yellow-800 font-bold text-center">
-            {unfoldedCount === 0 
-              ? "Drop anywhere to place first face"
-              : "Hover over an unfolded face edge to connect"
-            }
-          </p>
-        </div>
-      )}
 
       {/* Completion Message */}
       {shouldShowCompletion && (
